@@ -1,6 +1,4 @@
-from stock_longdb import ingest_stock_bar_5m
 import pandas as pd
-
 
 def get_sp500_symbols():
     url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
@@ -8,12 +6,7 @@ def get_sp500_symbols():
     return df["Symbol"].tolist()
 
 
-def main():
-    symbols = get_sp500_symbols()
-
-    for symbol in symbols:
-        ingest_stock_bar_5m(symbol)
-
-
 if __name__ == "__main__":
-    main()
+    symbols = get_sp500_symbols()
+    print("count:", len(symbols))
+    print(symbols[:10])
