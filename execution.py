@@ -15,10 +15,12 @@ from execution_functions import place_equity_order
 from execution_functions import preflight_single_leg_equity
 from execution_functions import place_stop_close_order
 from execution_functions import trail_exit_signals
+from datetime import time
 
 NY_TZ = ZoneInfo("America/New_York")
 XNYS = ecals.get_calendar("XNYS")  # NYSE
 
+now_et = datetime.now(NY_TZ).time()
 
 def run_equity_bot_for_symbol(symbol: str):
     now1 = datetime.now(NY_TZ)
@@ -27,6 +29,12 @@ def run_equity_bot_for_symbol(symbol: str):
     if not XNYS.is_open_on_minute(now1, ignore_breaks=True):
         print(f"Market closed (holiday/after-hours) — skipping insert. now={now1}")
         sys.exit(0)
+
+    time_trades_allowed = time(9, 30) <= now_et <= time(16, 0)
+
+    if not time_trades_allowed:
+     execute_trades = False
+
 
     token_response = get_access_token(SECRET_KEY)
     data = get_portfolio(ACCOUNT_ID, token_response)
