@@ -12,13 +12,16 @@ def run_stock_pressure_signal(symbol: str):
 
     groups = load_all_symbols(con, [symbol])
     if groups is None:
-     return "no data"
+     print("no data")
+     return
+
 
     # ===== STOCK METRICS =====
     stock = get_stock_metrics(groups, symbol)
 
     if stock is None:
-     return "no data"
+     print(f"[SKIP] {symbol}: no data")
+     return
 
 
     stock_short = stock["short"]
