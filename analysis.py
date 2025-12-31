@@ -11,6 +11,8 @@ def run_stock_pressure_signal(symbol: str):
     con = duckdb.connect("stocks_data.db")
 
     groups = load_all_symbols(con, [symbol])
+    if groups is None:
+     return "no data"
 
     # ===== STOCK METRICS =====
     stock = get_stock_metrics(groups, symbol)

@@ -18,7 +18,6 @@ def get_latest_stock_snapshot(con, table: str, symbol: str):
 
 
 
-
 def load_all_symbols(con, symbols):
     tables = {
         "short": "stock_bars_enriched_5m_3d",
@@ -28,10 +27,26 @@ def load_all_symbols(con, symbols):
     data = {}
 
     for sym in symbols:
-        data[sym] = {
-            "short": get_latest_stock_snapshot(con, tables["short"], sym),
-            "long":  get_latest_stock_snapshot(con, tables["long"],  sym),
-        }
+        short_df = None
+        long_df = None
+
+        try:
+            short_df = get_latest_stock_snapshot(con, tables["short"], sym)
+        except Exception:
+            short_df = None
+
+        try:
+            long_df = get_latest_stock_snapshot(con, tables["long"], sym)
+        except Exception:
+            long_df = None
+
+        # Normalize empty -> None (prevents .iloc[0] crashes later)
+        if short_df is not None and short_df.empty:
+            short_df = None
+        if long_df is not None and long_df.empty:
+            long_df = None
+
+        data[sym] = {"short": short_df, "long": long_df}
 
     return data
 
@@ -45,26 +60,37 @@ def get_stock_metrics(groups, symbol: str):
     groups: dict from load_all_symbols()
     symbol: e.g. "AAPL"
     """
-    short_df = groups[symbol]["short"]
-    long_df  = groups[symbol]["long"]
+
+    sym_group = groups.get(symbol)
+    if sym_group is None:
+        return None
+
+    short_df = sym_group.get("short")
+    long_df  = sym_group.get("long")
+
+    # Return None if missing or empty
+    if short_df is None or short_df.empty:
+        return None
+    if long_df is None or long_df.empty:
+        return None
 
     short_row = short_df.iloc[0]
     long_row  = long_df.iloc[0]
 
     return {
         "short": {
-            "z_price":     short_row["close_z"],
-            "z_volume":    short_row["volume_z"],
-            "z_volatility": short_row["range_z"],   # range_pct z-score
-            "open":        short_row["open"],
-            "high":        short_row["high"],
-            "low":         short_row["low"],
-            "close":       short_row["close"],
-            "volume":      short_row["volume"],
-            "range_pct":   short_row["range_pct"],
-            "symbol":      short_row["symbol"],
-            "timestamp":   short_row["timestamp"],
-            "snapshot_id": short_row["snapshot_id"],
+            "z_price":      short_row["close_z"],
+            "z_volume":     short_row["volume_z"],
+            "z_volatility": short_row["range_z"],
+            "open":         short_row["open"],
+            "high":         short_row["high"],
+            "low":          short_row["low"],
+            "close":        short_row["close"],
+            "volume":       short_row["volume"],
+            "range_pct":    short_row["range_pct"],
+            "symbol":       short_row["symbol"],
+            "timestamp":    short_row["timestamp"],
+            "snapshot_id":  short_row["snapshot_id"],
         },
         "long": {
             "z_price":      long_row["close_z"],
@@ -74,6 +100,7 @@ def get_stock_metrics(groups, symbol: str):
             "snapshot_id":  long_row["snapshot_id"],
         }
     }
+
 
 
 
