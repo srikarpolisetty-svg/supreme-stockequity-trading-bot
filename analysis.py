@@ -17,6 +17,10 @@ def run_stock_pressure_signal(symbol: str):
     # ===== STOCK METRICS =====
     stock = get_stock_metrics(groups, symbol)
 
+    if stock is None:
+     return "no data"
+
+
     stock_short = stock["short"]
     z_price_2_3day   = stock_short["z_price"]
     z_volume_2_3day  = stock_short["z_volume"]
