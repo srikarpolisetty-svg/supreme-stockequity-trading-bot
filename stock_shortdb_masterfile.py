@@ -1,5 +1,6 @@
 from stock_shortdb import ingest_stock_bar_5m_3d
 import pandas as pd
+import time
 
 
 def get_sp500_symbols():
@@ -16,6 +17,8 @@ def main():
             ingest_stock_bar_5m_3d(symbol)
         except Exception as e:
             print(f"[ERROR] {symbol}: {e}")
+
+        time.sleep(0.3)  # throttle every symbol
 
 
 if __name__ == "__main__":
