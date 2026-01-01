@@ -35,7 +35,7 @@ def ingest_stock_bar_5m(symbol: str):
         .strftime("%Y-%m-%d %H:%M:%S")
     )
     snapshot_id = f"{symbol}_{timestamp}"
-
+    print(snapshot_id)
     # --- DB connection ---
     con = duckdb.connect("stocks_data.db")
 

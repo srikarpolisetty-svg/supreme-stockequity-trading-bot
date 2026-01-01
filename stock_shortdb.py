@@ -39,6 +39,7 @@ def ingest_stock_bar_5m_3d(symbol: str):
         .strftime("%Y-%m-%d %H:%M:%S")
     )
     snapshot_id = f"{symbol}_{timestamp}"
+    print(snapshot_id)
 
     # ======================
     # DB CONNECTION
