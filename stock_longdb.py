@@ -12,6 +12,9 @@ def ingest_stock_bar_5m(symbol: str):
     # --- Pull data ---
     ticker = yf.Ticker(symbol)
     df = ticker.history(period="5d", interval="5m")
+    if df.empty:
+     return f"{symbol}: nothing in there"
+
     latest = df.iloc[-1]
 
     open_  = float(latest["Open"])
