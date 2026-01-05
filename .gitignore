@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 
 
+# Pipeline outputs
+runs/
+*.parquet
+
+# Databases (DuckDB)
+*.db
