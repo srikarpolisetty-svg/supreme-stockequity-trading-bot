@@ -2,9 +2,11 @@
 import duckdb
 
 
+import duckdb
+
+DB_PATH = "stocks_data.db"  # adjust path if needed
 
 def compute_z_scores_for_stock(
-    con,
     symbol: str,
     current_close: float,
     current_volume: float,
@@ -14,15 +16,17 @@ def compute_z_scores_for_stock(
     """
     Compute z-scores for close, volume, range_pct for a given symbol
     using historical rows in the stock bars table.
+    Opens a read-only connection to stocks_data.db.
     """
-    df = con.execute(
-        f"""
-        SELECT close, volume, range_pct
-        FROM {table}
-        WHERE symbol = ?
-        """,
-        [symbol],
-    ).df()
+    with duckdb.connect(DB_PATH, read_only=True) as con:
+        df = con.execute(
+            f"""
+            SELECT close, volume, range_pct
+            FROM {table}
+            WHERE symbol = ?
+            """,
+            [symbol],
+        ).df()
 
     if df.empty:
         return 0.0, 0.0, 0.0
@@ -45,8 +49,12 @@ def compute_z_scores_for_stock(
 
 
 
+
+import duckdb
+
+DB_PATH = "stocks_data.db"  # adjust if needed
+
 def compute_z_scores_for_stock_3d(
-    con,
     symbol: str,
     current_close: float,
     current_volume: float,
@@ -55,16 +63,18 @@ def compute_z_scores_for_stock_3d(
 ):
     """
     Compute z-scores for close, volume, range_pct for a given symbol
-    using historical rows in the stock bars table.
+    using historical rows in the 3-day stock bars table.
+    Opens a read-only connection to stocks_data.db.
     """
-    df = con.execute(
-        f"""
-        SELECT close, volume, range_pct
-        FROM {table}
-        WHERE symbol = ?
-        """,
-        [symbol],
-    ).df()
+    with duckdb.connect(DB_PATH, read_only=True) as con:
+        df = con.execute(
+            f"""
+            SELECT close, volume, range_pct
+            FROM {table}
+            WHERE symbol = ?
+            """,
+            [symbol],
+        ).df()
 
     if df.empty:
         return 0.0, 0.0, 0.0

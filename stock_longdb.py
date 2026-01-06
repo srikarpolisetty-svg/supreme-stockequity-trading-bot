@@ -31,29 +31,12 @@ def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
 
     snapshot_id = f"{symbol}_{timestamp}"
   # local run id (no params)
-    con = duckdb.connect("stocks_data.db")
+
 
     # ======================
     # RAW BARS (3 DAY)
     # ======================
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS stock_bars_raw_5m (
-        snapshot_id TEXT,
-        timestamp TIMESTAMP,
-        symbol TEXT,
-        open DOUBLE,
-        high DOUBLE,
-        low DOUBLE,
-        close DOUBLE,
-        volume BIGINT,
-        range_pct DOUBLE
-    );
-    """)
 
-    con.execute("""
-    DELETE FROM stock_bars_raw_5m
-    WHERE timestamp < NOW() - INTERVAL '3 days'
-    """)
     # =========================
     # RAW -> parquet (like 5W)
     # =========================
@@ -93,7 +76,6 @@ def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
     # (z-scores + placeholders)
     # =========================
     close_z, volume_z, range_z = compute_z_scores_for_stock(
-    con=con,
     symbol=symbol,
     current_close=close,
     current_volume=volume,
@@ -102,34 +84,7 @@ def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
 
 
 
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS stock_bars_enriched_5m (
-        snapshot_id TEXT,
-        timestamp TIMESTAMP,
-        symbol TEXT,
-        open DOUBLE,
-        high DOUBLE,
-        low DOUBLE,
-        close DOUBLE,
-        volume BIGINT,
-        range_pct DOUBLE,
-        close_z DOUBLE,
-        volume_z DOUBLE,
-        range_z DOUBLE,
-        opt_ret_10m DOUBLE,
-        opt_ret_1h DOUBLE,
-        opt_ret_eod DOUBLE,
-        opt_ret_next_open DOUBLE,
-        opt_ret_1d DOUBLE,
-        opt_ret_2d DOUBLE,
-        opt_ret_3d DOUBLE
-    );
-    """)
 
-    con.execute("""
-    DELETE FROM stock_bars_enriched_5m
-    WHERE timestamp < NOW() - INTERVAL '3 days'
-    """)
 
 
 
@@ -186,35 +141,7 @@ def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
 
 
 
-    con.execute("""
-    CREATE TABLE IF NOT EXISTS stock_execution_signals_5m (
-        snapshot_id TEXT,
-        timestamp TIMESTAMP,
-        symbol TEXT,
-        open DOUBLE,
-        high DOUBLE,
-        low DOUBLE,
-        close DOUBLE,
-        volume BIGINT,
-        range_pct DOUBLE,
-        close_z DOUBLE,
-        volume_z DOUBLE,
-        range_z DOUBLE,
-        opt_ret_10m DOUBLE,
-        opt_ret_1h DOUBLE,
-        opt_ret_eod DOUBLE,
-        opt_ret_next_open DOUBLE,
-        opt_ret_1d DOUBLE,
-        opt_ret_2d DOUBLE,
-        opt_ret_3d DOUBLE,
-        trade_signal BOOLEAN
-    );
-    """)
 
-    con.execute("""
-    DELETE FROM stock_execution_signals_5m
-    WHERE timestamp < NOW() - INTERVAL '3 days'
-    """)
     cols_signals = [
         "snapshot_id",
         "timestamp",
