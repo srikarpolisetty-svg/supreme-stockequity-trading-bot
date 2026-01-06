@@ -10,3 +10,4 @@ runs/
 # Databases (DuckDB)
 *.db
 
+logs/*.log
