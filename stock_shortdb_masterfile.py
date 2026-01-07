@@ -17,7 +17,7 @@ import pandas as pd
 import requests
 
 SP500_URL = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
-CACHE_PATH = "/home/ubuntu/supreme-options-bot/sp500_constituents.csv"
+CACHE_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/sp500_constituents.csv"
 
 def _atomic_write_csv(df: pd.DataFrame, path: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
