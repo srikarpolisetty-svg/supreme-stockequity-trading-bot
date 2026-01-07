@@ -3,6 +3,11 @@ import yfinance as yf
 import pandas as pd
 from dbfunctions import compute_z_scores_for_stock  # keep if you still want z's
 import duckdb
+from datetime import datetime
+import pytz
+
+
+
   
 def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
     # ---- pull data ----
@@ -23,11 +28,9 @@ def ingest_stock_bar_5m(symbol: str, shard_id: int, run_id: str):
 
     range_pct = (high - low) / close if close else None
 
-    timestamp = (
-        hist.index[-1]
-        .tz_convert("America/New_York")
-        .strftime("%Y-%m-%d %H:%M:%S")
-    )
+    timestamp = datetime.now(pytz.timezone("America/New_York")).strftime(
+    "%Y-%m-%d %H:%M:%S"
+ )
 
     snapshot_id = f"{symbol}_{timestamp}"
   # local run id (no params)
