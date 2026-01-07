@@ -20,16 +20,18 @@ echo "RUN_ID=$RUN_ID"
 git rev-parse --short HEAD || true
 
 for SHARD in {0..3}; do
-  /home/ubuntu/optionsenv/bin/python -u stock_shortdb_masterfile.py \
+  /home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u stock_shortdb_masterfile.py \
     --shard $SHARD \
     --shards 4 \
     --run_id "$RUN_ID" \
     >> "$LOGDIR/10min_${SHARD}.log" 2>&1 &
 done
 
+
 wait
 
-/home/ubuntu/optionsenv/bin/python -u stock_master_ingest_shortdb.py \
+/home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u stock_master_ingest_shortdb.py \
   --run_id "$RUN_ID" >> "$LOGDIR/10min_master.log" 2>&1
 
 echo "===== CRON END $(date) ====="
+
