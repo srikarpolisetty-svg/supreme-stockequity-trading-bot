@@ -1,6 +1,8 @@
 from stock_longdb import master_ingest_5w
 import duckdb
 import argparse
+from datetime import datetime
+
 
 DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
 
@@ -8,7 +10,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_id", required=True)
     args = parser.parse_args()
-
+    print(f"[MASTER] start {datetime.now()} run_id={args.run_id}", flush=True)
     with duckdb.connect(DB_PATH) as con:
         # 0) Ensure tables exist BEFORE ingest
         con.execute("""
