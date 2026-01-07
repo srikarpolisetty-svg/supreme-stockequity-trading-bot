@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from stock_shortdb import ingest_stock_bar_5m_3d
 import pandas as pd
 import time
@@ -7,7 +9,6 @@ from datetime import datetime
 import pytz
 
 
-from __future__ import annotations
 
 import os, time, tempfile
 from typing import List, Optional

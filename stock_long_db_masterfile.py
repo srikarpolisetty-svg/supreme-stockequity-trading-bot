@@ -1,3 +1,4 @@
+from __future__ import annotations
 from stock_longdb import ingest_stock_bar_5m
 import pandas as pd
 import time
@@ -5,7 +6,7 @@ import argparse
 from stock_longdb import master_ingest_5w
 
 
-from __future__ import annotations
+
 
 import os, time, tempfile
 from typing import List, Optional
