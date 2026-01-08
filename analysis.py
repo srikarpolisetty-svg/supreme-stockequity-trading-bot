@@ -40,12 +40,12 @@ def run_stock_pressure_signal(symbol: str):
 
     # ===== SIGNAL LOGIC =====
     stock_signal = (
-        z_price_5w  > 1.5 and
-        z_volume_5w > 1.5 and
-        z_vol_5w    > 1.5 and
-        z_price_2_3day  > 1.5 and
-        z_volume_2_3day > 1.5 and
-        z_vol_2_3day    > 1.5
+        z_price_5w  > 1.0 and
+        z_volume_5w > 1.0 and
+        z_vol_5w    > 1.0 and
+        z_price_2_3day  > 1.0 and
+        z_volume_2_3day > 1.0 and
+        z_vol_2_3day    > 1.0
     )
 
     if stock_signal:
