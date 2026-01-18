@@ -21,7 +21,7 @@ echo "RUN_ID=$RUN_ID"
 git rev-parse --short HEAD || true
 
 for SHARD in {0..11}; do
-  CLIENT_ID=$((1000 + SHARD))
+  CLIENT_ID=$((3000 + SHARD))
 
   /home/ubuntu/optionsenv/bin/python -u IBKRmasterfile.py \
     --shard $SHARD \
