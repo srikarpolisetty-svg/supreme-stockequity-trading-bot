@@ -14,23 +14,30 @@ whoami
 pwd
 
 RUN_ID=$(date +"%Y-%m-%d_%H-%M-%S")
+START_TS=$(date +%s)
 echo "RUN_ID=$RUN_ID"
 
 # Record code version (read-only, safe)
 git rev-parse --short HEAD || true
 
-for SHARD in {0..3}; do
-  /home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u IBKRmasterfile.py \
-    --shard $SHARD \
-    --shards 4 \
-    --run_id "$RUN_ID" \
-    >> "$LOGDIR/week_${SHARD}.log" 2>&1 &
-done
+for SHARD in {0..11}; do
+  CLIENT_ID=$((1000 + SHARD))
 
+  /home/ubuntu/optionsenv/bin/python -u IBKRmasterfile.py \
+    --shard $SHARD \
+    --shards 12 \
+    --run_id "$RUN_ID" \
+    --client_id $CLIENT_ID \
+    >> "$LOGDIR/data_${SHARD}.log" 2>&1 &
+done
 
 wait
 
-/home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u IBKRmaster_ingest.py \
-  --run_id "$RUN_ID" >> "$LOGDIR/master.log" 2>&1
+/home/ubuntu/optionsenv/bin/python -u IBKRmaster_ingest.py \
+  --run_id "$RUN_ID" >> "$LOGDIR/masteringest.log" 2>&1
+
+END_TS=$(date +%s)
+TOTAL_RUNTIME_SECONDS=$((END_TS - START_TS))
+echo "TOTAL_RUNTIME_SECONDS=$TOTAL_RUNTIME_SECONDS"
 
 echo "===== CRON END $(date) ====="
