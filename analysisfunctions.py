@@ -1,4 +1,8 @@
-def get_latest_stock_snapshot(con, table: str, symbol: str):
+def get_latest_stock_snapshot(
+    con,
+    table: str,
+    symbol: str,
+):
     """
     Grab the latest snapshot row for a given table / symbol.
     Returns a 1-row DataFrame.
@@ -13,117 +17,92 @@ def get_latest_stock_snapshot(con, table: str, symbol: str):
     return con.execute(query, [symbol]).df()
 
 
-
-
-
-
-
-def load_all_symbols(con, symbols):
-    tables = {
-        "short": "stock_bars_enriched_5m_3d",
-        "long":  "stock_bars_enriched_5m",
-    }
-
+def load_all_symbols(
+    con,
+    symbols,
+    table: str = "stock_bars_enriched_5m",
+):
+    """
+    Stock equivalent of load_all_groups() for options.
+    Returns:
+        data[symbol] = df_or_None
+    """
     data = {}
 
     for sym in symbols:
-        short_df = None
-        long_df = None
+        sym = str(sym).upper().strip()
 
         try:
-            short_df = get_latest_stock_snapshot(con, tables["short"], sym)
+            df = get_latest_stock_snapshot(con, table, sym)
         except Exception:
-            short_df = None
+            df = None
 
-        try:
-            long_df = get_latest_stock_snapshot(con, tables["long"], sym)
-        except Exception:
-            long_df = None
+        if df is not None and df.empty:
+            df = None
 
-        # Normalize empty -> None (prevents .iloc[0] crashes later)
-        if short_df is not None and short_df.empty:
-            short_df = None
-        if long_df is not None and long_df.empty:
-            long_df = None
-
-        data[sym] = {"short": short_df, "long": long_df}
+        data[sym] = df
 
     return data
 
 
-
-
-
-
 def get_stock_metrics(groups, symbol: str):
     """
-    groups: dict from load_all_symbols()
-    symbol: e.g. "AAPL"
+    Stock equivalent of get_option_metrics(), but returns BOTH 3-day and 35-day z-scores.
+    Expects `groups[symbol]` to be a 1-row DF from stock_bars_enriched_5m
+    that contains:
+      close_z_3d, volume_z_3d, range_z_3d,
+      close_z_35d, volume_z_35d, range_z_35d
     """
+    symbol = str(symbol).upper().strip()
 
-    sym_group = groups.get(symbol)
-    if sym_group is None:
+    df = groups.get(symbol)
+    if df is None or df.empty:
         return None
 
-    short_df = sym_group.get("short")
-    long_df  = sym_group.get("long")
-
-    # Return None if missing or empty
-    if short_df is None or short_df.empty:
-        return None
-    if long_df is None or long_df.empty:
-        return None
-
-    short_row = short_df.iloc[0]
-    long_row  = long_df.iloc[0]
+    row = df.iloc[0]
 
     return {
         "short": {
-            "z_price":      short_row["close_z"],
-            "z_volume":     short_row["volume_z"],
-            "z_volatility": short_row["range_z"],
-            "open":         short_row["open"],
-            "high":         short_row["high"],
-            "low":          short_row["low"],
-            "close":        short_row["close"],
-            "volume":       short_row["volume"],
-            "range_pct":    short_row["range_pct"],
-            "symbol":       short_row["symbol"],
-            "timestamp":    short_row["timestamp"],
-            "snapshot_id":  short_row["snapshot_id"],
+            "z_price":      row.get("close_z_3d"),
+            "z_volume":     row.get("volume_z_3d"),
+            "z_volatility": row.get("range_z_3d"),
         },
         "long": {
-            "z_price":      long_row["close_z"],
-            "z_volume":     long_row["volume_z"],
-            "z_volatility": long_row["range_z"],
-            "timestamp":    long_row["timestamp"],
-            "snapshot_id":  long_row["snapshot_id"],
-        }
+            "z_price":      row.get("close_z_35d"),
+            "z_volume":     row.get("volume_z_35d"),
+            "z_volatility": row.get("range_z_35d"),
+        },
+
+        "open":         row.get("open"),
+        "high":         row.get("high"),
+        "low":          row.get("low"),
+        "close":        row.get("close"),
+        "volume":       row.get("volume"),
+        "range_pct":    row.get("range_pct"),
+
+        "symbol":       row.get("symbol"),
+        "timestamp":    row.get("timestamp"),
+        "snapshot_id":  row.get("snapshot_id"),
+        "con_id":       row.get("con_id"),
     }
-
-
 
 
 
 def update_stock_signal(
     con,
-    short_snapshot_id: str,
-    long_snapshot_id: str,
     symbol: str,
-    signal_column: str = "trade_signal",
+    snapshot_id: str,
+    signal_column: str,
+    table: str = "stock_execution_signals_5m",
 ):
-    # Update short-term table (3-day)
-    con.execute(f"""
-        UPDATE stock_execution_signals_5m_3d
-        SET {signal_column} = TRUE
-        WHERE snapshot_id = ?
-          AND symbol = ?;
-    """, [short_snapshot_id, symbol])
+    """
+    Exact analogue of update_signal() for options.
+    """
+    symbol = str(symbol).upper().strip()
 
-    # Update long-term table
     con.execute(f"""
-        UPDATE stock_execution_signals_5m
+        UPDATE {table}
         SET {signal_column} = TRUE
         WHERE snapshot_id = ?
           AND symbol = ?;
-    """, [long_snapshot_id, symbol])
+    """, [snapshot_id, symbol])

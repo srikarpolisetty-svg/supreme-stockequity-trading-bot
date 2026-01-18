@@ -7,7 +7,7 @@ LOGDIR="/home/ubuntu/supreme-stockequity-trading-bot/logs"
 mkdir -p "$LOGDIR"
 
 # 🔴 WRAPPER LOG: capture EVERYTHING (cron-safe)
-exec >> "$LOGDIR/cron_5w_wrapper.log" 2>&1
+exec >> "$LOGDIR/cronwrapper.log" 2>&1
 set -x
 echo "===== CRON START $(date) ====="
 whoami
@@ -20,17 +20,17 @@ echo "RUN_ID=$RUN_ID"
 git rev-parse --short HEAD || true
 
 for SHARD in {0..3}; do
-  /home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u stock_long_db_masterfile.py \
+  /home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u IBKRmasterfile.py \
     --shard $SHARD \
     --shards 4 \
     --run_id "$RUN_ID" \
-    >> "$LOGDIR/5week_${SHARD}.log" 2>&1 &
+    >> "$LOGDIR/week_${SHARD}.log" 2>&1 &
 done
 
 
 wait
 
-/home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u stock_longdb_master_ingest.py \
-  --run_id "$RUN_ID" >> "$LOGDIR/5week_master.log" 2>&1
+/home/ubuntu/supreme-stockequity-trading-bot/optionsenv/bin/python -u IBKRmaster_ingest.py \
+  --run_id "$RUN_ID" >> "$LOGDIR/master.log" 2>&1
 
 echo "===== CRON END $(date) ====="
