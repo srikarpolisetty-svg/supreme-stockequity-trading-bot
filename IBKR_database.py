@@ -169,6 +169,18 @@ class StockApp(EWrapper, EClient):
             }
         )
 
+    def openOrder(self, orderId, contract, order, orderState):
+        print(
+            f"[ORDER] orderId={orderId} "
+            f"secType={contract.secType} "
+            f"symbol={getattr(contract, 'symbol', None)} "
+            f"qty={getattr(order, 'totalQuantity', None)}",
+            flush=True
+        )
+
+
+
+
     def historicalDataEnd(self, reqId: int, start: str, end: str):
         ev = self._pending_hist_end.get(reqId)
         if ev:
