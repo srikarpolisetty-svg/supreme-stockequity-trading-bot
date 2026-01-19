@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 import exchange_calendars as ecals
-from ib_insync import IB, Contract, MarketOrder, StopOrder, Order
+from ib_insync import IB, Contract, MarketOrder, Order
 
 
 # =========================
@@ -16,7 +16,6 @@ from ib_insync import IB, Contract, MarketOrder, StopOrder, Order
 HOST = "127.0.0.1"
 PORT = 4002
 DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
-
 
 EXECUTE_TRADES_DEFAULT = True
 ALLOW_EXITS_WHEN_KILLED = True
@@ -28,9 +27,10 @@ class RiskConfig:
     per_day_risk_pct: float = 0.01
     max_open_orders: int = 3
     min_order_age_seconds: int = 60 * 60
-    trail_pct: float = 0.10      # 10% trail
+    trail_pct: float = 0.10      # 10% trail (server-side)
     trail_tif: str = "GTC"
     entry_qty: int = 2
+    preflight_stop_pct: float = 0.04   # 4% "stop" used ONLY for risk math
 
 
 class IBKREquityExecutionEngine:
@@ -56,6 +56,10 @@ class IBKREquityExecutionEngine:
         self.XNYS = ecals.get_calendar("XNYS")
 
         self.order_submit_time: dict[int, datetime] = {}
+
+        # cache for single PnL subscription
+        self._pnl_sub = None
+
 
     # -------------------------
     # Connection
@@ -129,6 +133,41 @@ class IBKREquityExecutionEngine:
         self.ib.sleep(0.2)
         return t
 
+    # -------------------------
+    # Pricing (for preflight)
+    # -------------------------
+    def get_last_price(self, contract: Contract, timeout_s: float = 2.0) -> float | None:
+        """
+        Lightweight snapshot-ish fetch.
+        Returns last/close/mid if available, else None.
+        """
+        t = self.ib.reqMktData(contract, "", False, False)
+        deadline = time.time() + timeout_s
+
+        px = None
+        while time.time() < deadline:
+            self.ib.sleep(0.05)
+            last = getattr(t, "last", None)
+            close = getattr(t, "close", None)
+            bid = getattr(t, "bid", None)
+            ask = getattr(t, "ask", None)
+
+            if last is not None and last > 0:
+                px = float(last)
+                break
+            if close is not None and close > 0:
+                px = float(close)
+                break
+            if bid is not None and ask is not None and bid > 0 and ask > 0:
+                px = float((bid + ask) / 2.0)
+                break
+
+        try:
+            self.ib.cancelMktData(contract)
+        except Exception:
+            pass
+
+        return px
 
     # -------------------------
     # DB
@@ -148,6 +187,63 @@ class IBKREquityExecutionEngine:
         ).df()
         con.close()
         return df
+    def get_daily_pnl(self) -> float | None:
+        try:
+            acct = self.ib.managedAccounts()
+            if not acct:
+                return None
+            account = acct[0]
+
+            # subscribe ONCE
+            if self._pnl_sub is None:
+                self._pnl_sub = self.ib.reqPnL(account, "")
+                self.ib.sleep(0.25)   # let first value arrive
+            else:
+                self.ib.sleep(0.05)   # yield to event loop
+
+            daily = getattr(self._pnl_sub, "dailyPnL", None)
+            if daily is None:
+                return None
+            return float(daily)
+        except Exception:
+            return None
+
+
+    def close_all_stock_positions(self, allow: bool):
+        """
+        Force-liquidate all STK positions with market sells.
+        """
+        if not allow:
+            return
+
+        for p in self.get_positions():
+            try:
+                qty = int(p.position)
+                if qty > 0:
+                    self.place_market_sell(p.contract, qty, allow=True)
+            except Exception:
+                continue
+
+    def enforce_daily_loss_killswitch(self, max_day_risk: float, allow_exits: bool) -> bool:
+        """
+        If today's PnL <= -max_day_risk:
+          - closes all stock positions (if exits allowed)
+          - returns False (disallow new entries)
+        Otherwise returns True.
+        """
+        daily_pnl = self.get_daily_pnl()
+        if daily_pnl is None:
+            return True  # can't measure -> don't kill
+
+        if daily_pnl <= -float(max_day_risk):
+            print(
+                f"[EQUITY EXEC][KILL] daily_pnl={daily_pnl:.2f} <= -max_day_risk={max_day_risk:.2f} -> liquidate",
+                flush=True
+            )
+            self.close_all_stock_positions(allow=allow_exits)
+            return False
+
+        return True
 
     # -------------------------
     # Main loop
@@ -168,6 +264,11 @@ class IBKREquityExecutionEngine:
 
         max_trade_risk = buying_power * self.risk.per_trade_risk_pct
         max_day_risk = buying_power * self.risk.per_day_risk_pct
+
+        allow_orders = allow_orders and self.enforce_daily_loss_killswitch(
+            max_day_risk=max_day_risk,
+            allow_exits=allow_exits
+        )
 
         # -------------------------
         # Entry gates
@@ -200,6 +301,30 @@ class IBKREquityExecutionEngine:
             return
 
         contract = self.stock_contract_from_conid(conid)
+
+        # -------------------------
+        # PREFLIGHT risk/cost check
+        # -------------------------
+        if allow_orders:
+            qty = int(self.risk.entry_qty)
+
+            entry_price = self.get_last_price(contract, timeout_s=2.0)
+            if entry_price is None or entry_price <= 0:
+                print(f"[EQUITY EXEC][PREFLIGHT] skip {symbol}: no price", flush=True)
+                return
+
+            stop_price = float(entry_price) * (1.0 - float(self.risk.preflight_stop_pct))
+            risk_per_share = float(entry_price) - float(stop_price)
+            dollar_risk = float(risk_per_share) * float(qty)
+
+            if dollar_risk > float(max_trade_risk):
+                print(
+                    f"[EQUITY EXEC][PREFLIGHT] skip {symbol}: "
+                    f"dollar_risk={dollar_risk:.2f} > max_trade_risk={max_trade_risk:.2f} "
+                    f"(px={entry_price:.2f}, qty={qty}, stop%={self.risk.preflight_stop_pct:.2%})",
+                    flush=True
+                )
+                return
 
         # -------------------------
         # Entry
