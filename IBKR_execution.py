@@ -15,7 +15,7 @@ from ib_insync import IB, Contract, MarketOrder, StopOrder, Order
 # =========================
 HOST = "127.0.0.1"
 PORT = 4002
-DB_PATH = "stocks_data.db"
+DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
 
 
 EXECUTE_TRADES_DEFAULT = True
@@ -134,7 +134,7 @@ class IBKREquityExecutionEngine:
     # DB
     # -------------------------
     def load_latest_signal(self, symbol: str):
-        con = duckdb.connect(DB_PATH,read_only=True)
+        con = duckdb.connect(DB_PATH)
         df = con.execute(
             """
             SELECT *
