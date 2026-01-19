@@ -84,6 +84,20 @@ class StockApp(EWrapper, EClient):
 
     def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
         print(f"[STOCK] ERROR {reqId} {errorCode} {errorString}")
+
+        # 2176 = WARNING (fractional-share rules) → do NOT treat as failure
+        if int(errorCode) == 2176:
+            # still unblock any waits
+            ev = self._pending_contract_details.get(reqId)
+            if ev:
+                ev.set()
+
+            ev = self._pending_hist_end.get(reqId)
+            if ev:
+                ev.set()
+            return
+
+        # real errors only
         self._req_errors[reqId] = (int(errorCode), str(errorString))
 
         ev = self._pending_contract_details.get(reqId)
@@ -93,6 +107,7 @@ class StockApp(EWrapper, EClient):
         ev = self._pending_hist_end.get(reqId)
         if ev:
             ev.set()
+
 
     # -------------------------
     # ReqId
