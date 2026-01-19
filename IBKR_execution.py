@@ -15,7 +15,8 @@ from ib_insync import IB, Contract, MarketOrder, StopOrder, Order
 # =========================
 HOST = "127.0.0.1"
 PORT = 4002
-DB_PATH = "stocks_data.db"
+DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
+
 
 EXECUTE_TRADES_DEFAULT = True
 ALLOW_EXITS_WHEN_KILLED = True
