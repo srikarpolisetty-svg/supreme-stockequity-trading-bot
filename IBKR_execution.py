@@ -97,6 +97,7 @@ class IBKREquityExecutionEngine:
     def place_market_buy(self, contract: Contract, qty: int, allow: bool):
         if not allow:
             return None
+        qty = int(qty)
         t = self.ib.placeOrder(contract, MarketOrder("BUY", qty))
         self._track_trade(t)
         self.ib.sleep(0.2)
@@ -105,6 +106,7 @@ class IBKREquityExecutionEngine:
     def place_market_sell(self, contract: Contract, qty: int, allow: bool):
         if not allow:
             return None
+        qty = int(qty)
         t = self.ib.placeOrder(contract, MarketOrder("SELL", qty))
         self._track_trade(t)
         self.ib.sleep(0.2)
@@ -113,17 +115,19 @@ class IBKREquityExecutionEngine:
     def place_trailing_stop(self, contract: Contract, qty: int, allow: bool):
         if not allow:
             return None
+        qty = int(qty)
         o = Order(
             action="SELL",
             orderType="TRAIL",
             totalQuantity=qty,
-            trailingPercent=self.risk.trail_pct * 100.0,
+            trailingPercent=float(self.risk.trail_pct * 100.0),
             tif=self.risk.trail_tif,
         )
         t = self.ib.placeOrder(contract, o)
         self._track_trade(t)
         self.ib.sleep(0.2)
         return t
+
 
     # -------------------------
     # DB
