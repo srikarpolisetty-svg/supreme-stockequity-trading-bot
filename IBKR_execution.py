@@ -134,7 +134,7 @@ class IBKREquityExecutionEngine:
     # DB
     # -------------------------
     def load_latest_signal(self, symbol: str):
-        con = duckdb.connect(DB_PATH, read_only=True)
+        con = duckdb.connect(DB_PATH,read_only=True)
         df = con.execute(
             """
             SELECT *
