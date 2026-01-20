@@ -1,122 +1,97 @@
-
 import duckdb
+import pandas as pd
 
-
-import duckdb
-
-import duckdb
-
-DB_PATH = "stocks_data.db"
-
-MIN_ROWS = 30  # minimum history required for z-scores
+DB_PATH = "/home/ubuntu/supreme-options-bot-prekafka/stocks_data.db"
 
 def compute_z_scores_for_stock(
     symbol: str,
-    current_close: float,
-    current_volume: float,
-    current_range_pct: float,
+    current_close,
+    current_volume,
+    current_range_pct,
     table: str = "stock_bars_raw_5m",
 ):
-    try:
-        with duckdb.connect(DB_PATH, read_only=True) as con:
-            # --- SAFETY 1: table existence ---
-            tables = {
-                t[0] for t in con.execute("SHOW TABLES").fetchall()
-            }
-            if table not in tables:
-                # cold start: table not built yet
-                return 0.0, 0.0, 0.0
+    """
+    Compute BOTH 3-day and 35-day z-scores for close, volume, range_pct
+    from a single raw stock table.
 
-            df = con.execute(
-                f"""
-                SELECT close, volume, range_pct
-                FROM {table}
-                WHERE symbol = ?
-                """,
-                [symbol],
-            ).df()
+    Returns:
+        (close_z_3d, vol_z_3d, range_z_3d, close_z_35d, vol_z_35d, range_z_35d)
+        where any element can be None if we can't compute it safely.
+    """
 
-    except Exception:
-        # any unexpected DB issue → fail soft
-        return 0.0, 0.0, 0.0
+    with duckdb.connect(DB_PATH, read_only=True) as con:
+        df = con.execute(
+            f"""
+            SELECT
+                close,
+                volume,
+                range_pct,
+                timestamp
+            FROM {table}
+            WHERE symbol = ?
+              AND timestamp >= CURRENT_TIMESTAMP - INTERVAL 35 DAY
+            """,
+            [symbol],
+        ).df()
 
-    # --- SAFETY 2: not enough data ---
-    if df.empty or len(df) < MIN_ROWS:
-        return 0.0, 0.0, 0.0
+    if df.empty:
+        return (None, None, None, None, None, None)
 
-    close_std = df["close"].std()
-    vol_std   = df["volume"].std()
-    rp_std    = df["range_pct"].std()
+    # Make sure timestamp is datetime
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
 
-    # --- SAFETY 3: zero variance ---
-    if not close_std or not vol_std or not rp_std:
-        return 0.0, 0.0, 0.0
+    # Helper: safe z
+    def z(curr, series: pd.Series):
+        if curr is None:
+            return None
 
-    close_z = (current_close - df["close"].mean()) / close_std
-    vol_z   = (current_volume - df["volume"].mean()) / vol_std
-    rp_z    = (current_range_pct - df["range_pct"].mean()) / rp_std
+        s = series.dropna()
+        if s.empty:
+            return None
 
-    return close_z, vol_z, rp_z
+        mean = s.mean()
+        std  = s.std()
+
+        if std is None or pd.isna(std) or std <= 0:
+            return None
+
+        try:
+            curr_val = float(curr)
+        except Exception:
+            return None
+
+        return (curr_val - mean) / std
+
+    # --------------------
+    # 3-day window (relative to most recent timestamp we have for this symbol)
+    # --------------------
+    tmax = df["timestamp"].max()
+    if pd.isna(tmax):
+        df_3d = df.iloc[0:0]
+    else:
+        df_3d = df[df["timestamp"] >= (tmax - pd.Timedelta(days=3))]
+
+    close_z_3d = z(current_close,     df_3d["close"])
+    vol_z_3d   = z(current_volume,    df_3d["volume"])
+    range_z_3d = z(current_range_pct, df_3d["range_pct"])
+
+    # --------------------
+    # 35-day window
+    # --------------------
+    close_z_35d = z(current_close,     df["close"])
+    vol_z_35d   = z(current_volume,    df["volume"])
+    range_z_35d = z(current_range_pct, df["range_pct"])
+
+    return (close_z_3d, vol_z_3d, range_z_3d, close_z_35d, vol_z_35d, range_z_35d)
 
 
 
 
 
 
-import duckdb
 
-import duckdb
 
-DB_PATH = "stocks_data.db"
 
-MIN_ROWS = 30  # adjust if you want more history
-
-def compute_z_scores_for_stock_3d(
-    symbol: str,
-    current_close: float,
-    current_volume: float,
-    current_range_pct: float,
-    table: str = "stock_bars_raw_5m_3d",
-):
-    try:
-        with duckdb.connect(DB_PATH, read_only=True) as con:
-            # --- SAFETY 1: table existence ---
-            tables = {
-                t[0] for t in con.execute("SHOW TABLES").fetchall()
-            }
-            if table not in tables:
-                return 0.0, 0.0, 0.0
-
-            df = con.execute(
-                f"""
-                SELECT close, volume, range_pct
-                FROM {table}
-                WHERE symbol = ?
-                """,
-                [symbol],
-            ).df()
-
-    except Exception:
-        # fail soft on any DB issue
-        return 0.0, 0.0, 0.0
-
-    # --- SAFETY 2: not enough data ---
-    if df.empty or len(df) < MIN_ROWS:
-        return 0.0, 0.0, 0.0
-
-    close_std = df["close"].std()
-    vol_std   = df["volume"].std()
-    rp_std    = df["range_pct"].std()
-
-    # --- SAFETY 3: zero variance ---
-    if not close_std or not vol_std or not rp_std:
-        return 0.0, 0.0, 0.0
-
-    close_z = (current_close - df["close"].mean()) / close_std
-    vol_z   = (current_volume - df["volume"].mean()) / vol_std
-    rp_z    = (current_range_pct - df["range_pct"].mean()) / rp_std
-
-    return close_z, vol_z, rp_z
 
 
 
