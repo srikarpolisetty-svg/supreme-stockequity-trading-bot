@@ -417,6 +417,8 @@ def main_parquet(
 # Master ingest
 # -------------------------
 def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
+    import glob
+
     raw_dir = f"runs/{run_id}/stock_bars_raw_5m"
     enriched_dir = f"runs/{run_id}/stock_bars_enriched_5m"
     signals_dir = f"runs/{run_id}/stock_execution_signals_5m"
@@ -425,36 +427,78 @@ def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
     enriched_glob = f"{enriched_dir}/shard_*.parquet"
     signals_glob = f"{signals_dir}/shard_*.parquet"
 
+    # ---- guard: skip cleanly if nothing to ingest ----
+    signals_files = glob.glob(signals_glob)
+    enriched_files = glob.glob(enriched_glob)
+    raw_files = glob.glob(raw_glob)
+
+    if not (signals_files or enriched_files or raw_files):
+        print(f"[STOCK][INGEST] no parquet files found for run_id={run_id}", flush=True)
+        return
+
     con = duckdb.connect(db_path)
     try:
         con.execute("BEGIN;")
 
-        con.execute(
+        def _assert_schema_order(table: str, parquet_glob: str):
             """
-            INSERT INTO stock_execution_signals_5m
-            SELECT * FROM read_parquet(?)
-            """,
-            [signals_glob],
-        )
+            Enforce: parquet columns (names + order) exactly match table columns.
+            This makes SELECT * safe by guaranteeing alignment.
+            """
+            # if no files for this glob, skip this table insert
+            if not glob.glob(parquet_glob):
+                print(f"[STOCK][INGEST] skip {table}: no files", flush=True)
+                return False
 
-        con.execute(
-            """
-            INSERT INTO stock_bars_enriched_5m
-            SELECT * FROM read_parquet(?)
-            """,
-            [enriched_glob],
-        )
+            pq_cols = con.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)",
+                [parquet_glob],
+            ).df()["column_name"].tolist()
 
-        con.execute(
-            """
-            INSERT INTO stock_bars_raw_5m
-            SELECT * FROM read_parquet(?)
-            """,
-            [raw_glob],
-        )
+            tbl_cols = con.execute(
+                f"PRAGMA table_info('{table}')"
+            ).df()["name"].tolist()
+
+            if pq_cols != tbl_cols:
+                raise RuntimeError(
+                    f"[STOCK][INGEST] schema/order mismatch for {table}\n"
+                    f"  parquet={pq_cols}\n"
+                    f"  table ={tbl_cols}"
+                )
+            return True
+
+        # ---- signals ----
+        if _assert_schema_order("stock_execution_signals_5m", signals_glob):
+            con.execute(
+                """
+                INSERT INTO stock_execution_signals_5m
+                SELECT * FROM read_parquet(?)
+                """,
+                [signals_glob],
+            )
+
+        # ---- enriched ----
+        if _assert_schema_order("stock_bars_enriched_5m", enriched_glob):
+            con.execute(
+                """
+                INSERT INTO stock_bars_enriched_5m
+                SELECT * FROM read_parquet(?)
+                """,
+                [enriched_glob],
+            )
+
+        # ---- raw ----
+        if _assert_schema_order("stock_bars_raw_5m", raw_glob):
+            con.execute(
+                """
+                INSERT INTO stock_bars_raw_5m
+                SELECT * FROM read_parquet(?)
+                """,
+                [raw_glob],
+            )
 
         con.execute("COMMIT;")
-        print(f"[STOCK][INGEST] committed run_id={run_id}")
+        print(f"[STOCK][INGEST] committed run_id={run_id}", flush=True)
 
     except Exception:
         con.execute("ROLLBACK;")

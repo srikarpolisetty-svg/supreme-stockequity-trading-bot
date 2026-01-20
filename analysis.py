@@ -10,17 +10,28 @@ from analysisfunctions import update_stock_signal
 from message import send_text
 
 
-def run_stock_pressure_signal(symbol: str):
+def run_stock_pressure_signal(
+    symbol: str,
+
+    # short-term (3d)
+    thr_price_3d: float = 0.8,
+    thr_volume_3d: float = 1.0,
+    thr_vol_3d: float = 0.6,
+
+    # structural (35d)
+    thr_price_35d: float = 1.2,
+    thr_volume_35d: float = 1.3,
+    thr_vol_35d: float = 1.0,
+):
+
     # -------------------------
     # Market-hours gate (same as options)
     # -------------------------
     NY_TZ = ZoneInfo("America/New_York")
-    XNYS = ecals.get_calendar("XNYS")
+
 
     now = datetime.now(NY_TZ)
-    if not XNYS.is_open_on_minute(now, ignore_breaks=True):
-        print(f"Market closed — skipping stock signal. now={now}")
-        sys.exit(0)
+
 
     print(f"Run time: {now.strftime('%Y-%m-%d %H:%M')}")
 
@@ -44,7 +55,7 @@ def run_stock_pressure_signal(symbol: str):
     # -------------------------
     # Helpers (same style as options)
     # -------------------------
-    def gt(x, thr=1.0):
+    def gt(x, thr):
         try:
             if x is None:
                 return False
@@ -74,15 +85,15 @@ def run_stock_pressure_signal(symbol: str):
     symbol = stock["symbol"]
 
     # -------------------------
-    # Signal logic (identical structure to options)
+    # Signal logic (custom thresholds)
     # -------------------------
     stock_signal = (
-        gt(z_price_35d)  and
-        gt(z_volume_35d) and
-        gt(z_vol_35d)    and
-        gt(z_price_3d)   and
-        gt(z_volume_3d)  and
-        gt(z_vol_3d)
+        gt(z_price_35d,  thr_price_35d)  and
+        gt(z_volume_35d, thr_volume_35d) and
+        gt(z_vol_35d,    thr_vol_35d)    and
+        gt(z_price_3d,   thr_price_3d)   and
+        gt(z_volume_3d,  thr_volume_3d)  and
+        gt(z_vol_3d,     thr_vol_3d)
     )
 
     # -------------------------
@@ -93,9 +104,8 @@ def run_stock_pressure_signal(symbol: str):
             f"🚀 STRONG STOCK PRESSURE SIGNAL\n\n"
             f"Symbol: {symbol}\n"
             f"Price (close): {price}\n\n"
-            f"Price / Volume / Volatility Z-scores > 1.0\n"
-            f"in BOTH 3-day and 35-day windows.\n"
-            f"Significant market pressure detected."
+            f"3D thresholds:  price>{thr_price_3d}, volume>{thr_volume_3d}, vol>{thr_vol_3d}\n"
+            f"35D thresholds: price>{thr_price_35d}, volume>{thr_volume_35d}, vol>{thr_vol_35d}\n"
         )
 
         print("ALERT SENT (STOCK PRESSURE)")
