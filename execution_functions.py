@@ -1,4 +1,4 @@
-import duckdb
+
 
 
 def to_float(x, default=0.0):
@@ -12,7 +12,7 @@ def to_float(x, default=0.0):
 
 
 
-con = duckdb.connect("/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db")
+
 
 def get_all_symbols(con, table="stock_bars_enriched_5m"):
     df = con.execute(

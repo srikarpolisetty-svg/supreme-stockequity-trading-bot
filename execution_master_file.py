@@ -6,7 +6,7 @@ DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
 CLIENT_ID = 2001   # pick a unique client id for this engine
 
 # Load symbols (DB only used for symbol list)
-with duckdb.connect(DB_PATH) as con:
+with duckdb.connect(DB_PATH, read_only=True) as con:
     symbols = get_all_symbols(con)
 
 # State-driven execution (single IB session)
