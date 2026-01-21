@@ -1,7 +1,7 @@
 import duckdb
 import pandas as pd
 
-DB_PATH = "/home/ubuntu/supreme-options-bot-prekafka/stocks_data.db"
+DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
 
 def compute_z_scores_for_stock(
     symbol: str,
