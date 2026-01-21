@@ -23,7 +23,8 @@ def run_stock_pressure_signal(
     now = datetime.now(NY_TZ)
     print(f"Run time: {now.strftime('%Y-%m-%d %H:%M')}")
 
-    con = duckdb.connect("stocks_data.db")
+    con = duckdb.connect("/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db")
+
     try:
         groups = load_all_symbols(con, [symbol])
         if groups is None:
