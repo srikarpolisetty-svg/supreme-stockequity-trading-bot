@@ -418,6 +418,7 @@ def main_parquet(
 # -------------------------
 def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
     import glob
+    import duckdb
 
     raw_dir = f"runs/{run_id}/stock_bars_raw_5m"
     enriched_dir = f"runs/{run_id}/stock_bars_enriched_5m"
@@ -443,15 +444,14 @@ def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
         def _assert_schema_order(table: str, parquet_glob: str):
             """
             Enforce: parquet columns (names + order) exactly match table columns.
-            This makes SELECT * safe by guaranteeing alignment.
+            Uses union_by_name=true so multi-file schema inference doesn't break on NULL vs DOUBLE.
             """
-            # if no files for this glob, skip this table insert
             if not glob.glob(parquet_glob):
                 print(f"[STOCK][INGEST] skip {table}: no files", flush=True)
                 return False
 
             pq_cols = con.execute(
-                "DESCRIBE SELECT * FROM read_parquet(?)",
+                "DESCRIBE SELECT * FROM read_parquet(?, union_by_name=true)",
                 [parquet_glob],
             ).df()["column_name"].tolist()
 
@@ -472,7 +472,7 @@ def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
             con.execute(
                 """
                 INSERT INTO stock_execution_signals_5m
-                SELECT * FROM read_parquet(?)
+                SELECT * FROM read_parquet(?, union_by_name=true)
                 """,
                 [signals_glob],
             )
@@ -482,7 +482,7 @@ def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
             con.execute(
                 """
                 INSERT INTO stock_bars_enriched_5m
-                SELECT * FROM read_parquet(?)
+                SELECT * FROM read_parquet(?, union_by_name=true)
                 """,
                 [enriched_glob],
             )
@@ -492,7 +492,7 @@ def master_ingest_5m(run_id: str, db_path: str = DB_PATH):
             con.execute(
                 """
                 INSERT INTO stock_bars_raw_5m
-                SELECT * FROM read_parquet(?)
+                SELECT * FROM read_parquet(?, union_by_name=true)
                 """,
                 [raw_glob],
             )
