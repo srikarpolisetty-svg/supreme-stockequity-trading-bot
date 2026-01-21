@@ -3,7 +3,7 @@ import duckdb
 from execution_functions import get_all_symbols
 
 
-con = duckdb.connect("stocks_data.db")
+con = duckdb.connect("/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db")
 
 
 symbols = get_all_symbols(con)

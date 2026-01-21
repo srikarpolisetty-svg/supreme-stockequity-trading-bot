@@ -1,6 +1,6 @@
 import duckdb 
 
-con = duckdb.connect("stocks_data.db")
+con = duckdb.connect("/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db")
 
 
 
