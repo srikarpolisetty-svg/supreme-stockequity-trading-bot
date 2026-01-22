@@ -13,7 +13,11 @@ with duckdb.connect(
     read_only=True,
 ) as con:
 
-    df = backtest_returns_stock_5m(con)
+    # get last 100 timestamps
+    df = backtest_returns_stock_5m(
+        con,
+        latest_n=100,
+    )
 
     print(len(df))
     print(df)
