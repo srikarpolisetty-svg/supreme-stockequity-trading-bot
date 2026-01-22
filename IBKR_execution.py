@@ -82,7 +82,8 @@ class IBKREquityExecutionEngine:
                     parts.append(f"{k}=?")
             extras = " " + " ".join(parts)
 
-        print(f"[EQUITY EXEC][{event}] {ts}{extras}", flush=True)
+        # ✅ LEVEL 1: remove flush=True to avoid disk-sync spam + massive slowdown
+        print(f"[EQUITY EXEC][{event}] {ts}{extras}")
 
     def _print_positions_snapshot(self, where: str):
         try:
@@ -257,8 +258,7 @@ class IBKREquityExecutionEngine:
         except Exception as e:
             try:
                 print(
-                    f"[EQUITY EXEC][DB] load_latest_signal failed for {symbol}: {e}",
-                    flush=True,
+                    f"[EQUITY EXEC][DB] load_latest_signal failed for {symbol}: {e}"
                 )
             except Exception:
                 pass
@@ -510,7 +510,7 @@ class IBKREquityExecutionEngine:
             px = self.get_mark_price_snapshot(contract)
             if px is None or px <= 0:
                 self.log("ORDER_BUY_LMT_SKIP_NO_PRICE", conid=getattr(contract, "conId", None), rth=False)
-                print("[EQUITY EXEC][ENTRY] skip: no price for outside-RTH limit", flush=True)
+                print("[EQUITY EXEC][ENTRY] skip: no price for outside-RTH limit")
                 return None
             limit_px = round(px * 1.002, 2)  # +0.2%
             self.log(
@@ -551,7 +551,7 @@ class IBKREquityExecutionEngine:
             px = self.get_mark_price_snapshot(contract)
             if px is None or px <= 0:
                 self.log("ORDER_TP1_LMT_SKIP_NO_PRICE", conid=getattr(contract, "conId", None), rth=False)
-                print("[EQUITY EXEC][SCALEOUT] skip: no price for outside-RTH limit", flush=True)
+                print("[EQUITY EXEC][SCALEOUT] skip: no price for outside-RTH limit")
                 return None
             limit_px = round(px * 0.998, 2)  # -0.2% to help fill
             self.log("ORDER_TP1_LMT_PLACING", conid=getattr(contract, "conId", None), rth=False, mark=round(float(px), 4), limit_px=limit_px)
@@ -716,7 +716,7 @@ class IBKREquityExecutionEngine:
             conid = self._safe_int(row["con_id"])
             if conid is None:
                 self.log("SIGNAL_SKIP_BAD_CONID", symbol=symbol, raw_con_id=row.get("con_id", None))
-                print(f"[EQUITY EXEC][SIGNAL] skip {symbol}: bad con_id", flush=True)
+                print(f"[EQUITY EXEC][SIGNAL] skip {symbol}: bad con_id")
                 return
 
             if self._already_long_conid(conid):
@@ -731,7 +731,7 @@ class IBKREquityExecutionEngine:
                 entry_price = self.get_mark_price_snapshot(contract)
                 if entry_price is None or entry_price <= 0:
                     self.log("PREFLIGHT_SKIP_NO_PRICE", symbol=symbol, conid=conid)
-                    print(f"[EQUITY EXEC][PREFLIGHT] skip {symbol}: no price", flush=True)
+                    print(f"[EQUITY EXEC][PREFLIGHT] skip {symbol}: no price")
                     return
 
                 stop_price_for_math = float(entry_price) * (1.0 - float(self.risk.preflight_stop_pct))
@@ -753,8 +753,7 @@ class IBKREquityExecutionEngine:
                     self.log("PREFLIGHT_SKIP_RISK_TOO_HIGH", symbol=symbol, conid=conid, dollar_risk=round(float(dollar_risk), 2), max_trade_risk=round(float(max_trade_risk), 2))
                     print(
                         f"[EQUITY EXEC][PREFLIGHT] skip {symbol}: "
-                        f"dollar_risk={dollar_risk:.2f} > max_trade_risk={max_trade_risk:.2f}",
-                        flush=True
+                        f"dollar_risk={dollar_risk:.2f} > max_trade_risk={max_trade_risk:.2f}"
                     )
                     return
 
