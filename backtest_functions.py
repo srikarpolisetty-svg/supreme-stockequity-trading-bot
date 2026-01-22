@@ -39,6 +39,7 @@ def backtest_returns_stock_5m(
     """
     Stock analogue of backtest_returns_5w().
 
+    Returns ONLY the latest timestamp slice (optionally for a single symbol).
     Expects columns in `table` (default stock_bars_enriched_5m):
       timestamp, symbol,
       open, high, low, close, volume, range_pct,
@@ -48,6 +49,8 @@ def backtest_returns_stock_5m(
 
     If you want to filter on `trade_signal`, pass table="stock_execution_signals_5m".
     """
+    sym = str(symbol).upper().strip() if symbol else None
+
     query = f"""
         SELECT
             timestamp,
@@ -77,7 +80,7 @@ def backtest_returns_stock_5m(
         FROM {table}
         WHERE 1=1
 
-          {f"AND symbol = '{str(symbol).upper().strip()}'" if symbol else ""}
+          {f"AND symbol = '{sym}'" if sym else ""}
 
           {f"AND close >= {price_min}" if price_min is not None else ""}
           {f"AND close <= {price_max}" if price_max is not None else ""}
@@ -107,5 +110,13 @@ def backtest_returns_stock_5m(
           {f"AND range_z_35d <= {range_z_35d_max}" if range_z_35d_max is not None else ""}
 
           {f"AND trade_signal = {str(bool(trade_signal)).upper()}" if trade_signal is not None else ""}
+
+          -- latest slice only
+          AND timestamp = (
+              SELECT max(timestamp)
+              FROM {table}
+              WHERE 1=1
+                {f"AND symbol = '{sym}'" if sym else ""}
+          )
     """
     return con.execute(query).df()
