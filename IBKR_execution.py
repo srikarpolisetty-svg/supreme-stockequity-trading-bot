@@ -60,7 +60,7 @@ class IBKREquityExecutionEngine:
         # cache for single PnL subscription
         self._pnl_sub = None
 
-        # ✅ NEW: suppress position-management spam (log PM only once per main_execution cycle)
+        # ✅ suppress PM logs: allow PM logs only once per main_execution cycle
         self._pm_logged_this_cycle: bool = False
 
     # =========================
@@ -866,9 +866,8 @@ class IBKREquityExecutionEngine:
                     self.log("PM_ERR", symbol=symbol, err=str(e))
                 continue
 
-        # ✅ flip once after first symbol's management pass
-        if not self._pm_logged_this_cycle:
-            self._pm_logged_this_cycle = True
+        # ✅ lock PM logging for the rest of this main_execution cycle (no more PM logs for remaining symbols)
+        self._pm_logged_this_cycle = True
 
         self.log("RUN_END", symbol=symbol)
 
