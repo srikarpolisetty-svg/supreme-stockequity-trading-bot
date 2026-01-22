@@ -72,7 +72,12 @@ class StockApp(EWrapper, EClient):
         self._pending_hist_end: dict[int, threading.Event] = {}
 
         self._stock_contract: Contract | None = None
-        self._hist_rows: list[dict] = []
+
+        # CHANGED: keep hist rows keyed by reqId (prevents late-callback bleed)
+        self._hist_rows_by_req: dict[int, list[dict]] = {}
+
+        # CHANGED: deterministic contractDetails wait
+        self._last_contract_req_id: int | None = None
 
     # -------------------------
     # Connection lifecycle
@@ -108,7 +113,6 @@ class StockApp(EWrapper, EClient):
         if ev:
             ev.set()
 
-
     # -------------------------
     # ReqId
     # -------------------------
@@ -121,13 +125,29 @@ class StockApp(EWrapper, EClient):
     # Reset per symbol
     # -------------------------
     def reset_for_symbol(self, symbol: str):
+        # CHANGED: cancel lingering historical requests BEFORE clearing dict
+        try:
+            for rid in list(self._pending_hist_end.keys()):
+                try:
+                    self.cancelHistoricalData(rid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         self.symbol = str(symbol).upper().strip()
         self._stock_contract = None
-        self._hist_rows = []
 
+        # CHANGED: rows keyed by reqId
+        self._hist_rows_by_req = {}
+
+        # clear local state
         self._req_errors = {}
         self._pending_contract_details = {}
         self._pending_hist_end = {}
+
+        # CHANGED: deterministic contract wait id
+        self._last_contract_req_id = None
 
     # -------------------------
     # Contract qualification (captures conId)
@@ -135,6 +155,7 @@ class StockApp(EWrapper, EClient):
     def start_symbol(self, symbol: str):
         self.reset_for_symbol(symbol)
         rid = self._new_req_id()
+        self._last_contract_req_id = rid  # CHANGED: remember exactly which rid we created
         ev = threading.Event()
         self._pending_contract_details[rid] = ev
         self.reqContractDetails(rid, make_stock(symbol))
@@ -173,7 +194,8 @@ class StockApp(EWrapper, EClient):
         return rid
 
     def historicalData(self, reqId, bar):
-        self._hist_rows.append(
+        # CHANGED: store per-reqId rows (prevents cross-symbol bleed)
+        self._hist_rows_by_req.setdefault(reqId, []).append(
             {
                 "date": str(bar.date),
                 "open": float(bar.open),
@@ -193,9 +215,6 @@ class StockApp(EWrapper, EClient):
             flush=True
         )
 
-
-
-
     def historicalDataEnd(self, reqId: int, start: str, end: str):
         ev = self._pending_hist_end.get(reqId)
         if ev:
@@ -205,11 +224,13 @@ class StockApp(EWrapper, EClient):
     # One-symbol sequence
     # -------------------------
     def run_sequence(self, run_id: str, shard_id: int):
-        if not self._pending_contract_details:
-            print(f"[STOCK] skip {self.symbol}: no contractDetails request")
+        # CHANGED: deterministic wait on the exact contractDetails reqId we issued
+        reqId = self._last_contract_req_id
+        ev = self._pending_contract_details.get(reqId) if reqId is not None else None
+        if ev is None:
+            print(f"[STOCK] skip {self.symbol}: missing contractDetails event")
             return None
 
-        reqId, ev = next(iter(self._pending_contract_details.items()))
         ev.wait(timeout=2.0)
         self._pending_contract_details.pop(reqId, None)
 
@@ -230,11 +251,13 @@ class StockApp(EWrapper, EClient):
             print(f"[STOCK] skip {self.symbol}: historicalData failed")
             return None
 
-        if not self._hist_rows:
+        # CHANGED: pull rows for THIS hist_req only
+        rows = self._hist_rows_by_req.get(hist_req, [])
+        if not rows:
             print(f"[STOCK] skip {self.symbol}: no hist rows")
             return None
 
-        latest = self._hist_rows[-1]
+        latest = rows[-1]
 
         open_ = float(latest["open"])
         high = float(latest["high"])
@@ -411,6 +434,7 @@ def main_parquet(
                 continue
     finally:
         app.disconnect()
+
 
 
 # -------------------------

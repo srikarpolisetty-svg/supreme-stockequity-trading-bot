@@ -60,6 +60,9 @@ class IBKREquityExecutionEngine:
         # cache for single PnL subscription
         self._pnl_sub = None
 
+        # ✅ NEW: suppress position-management spam (log PM only once per main_execution cycle)
+        self._pm_logged_this_cycle: bool = False
+
     # =========================
     # PRINT VISIBILITY HELPERS (no refactor)
     # =========================
@@ -614,9 +617,10 @@ class IBKREquityExecutionEngine:
             rth_now=self._is_rth_now(),
         )
 
-        # Snapshots at start
-        self._print_positions_snapshot(where="run_start")
-        self._print_open_orders_snapshot(where="run_start")
+        # ✅ only do full snapshots once per cycle (not per symbol)
+        if not self._pm_logged_this_cycle:
+            self._print_positions_snapshot(where="run_start")
+            self._print_open_orders_snapshot(where="run_start")
 
         # Buying power (SAFE)
         acct = {}
@@ -763,9 +767,10 @@ class IBKREquityExecutionEngine:
                         oid = None
                     self.log("ORDER_BUY_DONE", symbol=symbol, conid=conid, qty=qty, orderId=oid)
 
-                    # snapshots after entry attempt
-                    self._print_positions_snapshot(where="after_buy")
-                    self._print_open_orders_snapshot(where="after_buy")
+                    # ✅ only snapshot after entry once per cycle (not per symbol)
+                    if not self._pm_logged_this_cycle:
+                        self._print_positions_snapshot(where="after_buy")
+                        self._print_open_orders_snapshot(where="after_buy")
 
                     # trailing stop safety net (place only if no WORKING trail exists)
                     if not self._has_working_trailing_sell(conid):
@@ -773,8 +778,10 @@ class IBKREquityExecutionEngine:
                     else:
                         self.log("ORDER_TRAIL_SKIP_EXISTS", symbol=symbol, conid=conid)
 
-                    self._print_positions_snapshot(where="after_trail")
-                    self._print_open_orders_snapshot(where="after_trail")
+                    # ✅ only snapshot after trail once per cycle (not per symbol)
+                    if not self._pm_logged_this_cycle:
+                        self._print_positions_snapshot(where="after_trail")
+                        self._print_open_orders_snapshot(where="after_trail")
 
         # -------------------------
         # Position management (applies to ALL open stock positions)
@@ -782,6 +789,8 @@ class IBKREquityExecutionEngine:
         #  +0.5% -> stop at entry
         #  +1.0% -> sell 1 of 2
         # -------------------------
+        do_log_pm = not self._pm_logged_this_cycle
+
         for p in self.get_positions():
             try:
                 qty = int(p.position)
@@ -789,60 +798,77 @@ class IBKREquityExecutionEngine:
                     continue
 
                 conid = int(p.contract.conId)
+                pos_sym = getattr(p.contract, "symbol", None)
+
                 entry = self._entry_from_position(p)
                 if entry is None or entry <= 0:
-                    self.log("PM_SKIP_NO_ENTRY", symbol=symbol, conid=conid, qty=qty)
+                    if do_log_pm:
+                        self.log("PM_SKIP_NO_ENTRY", symbol=pos_sym, conid=conid, qty=qty)
                     continue
 
                 mark = self.get_mark_price_snapshot(p.contract)
                 if mark is None or mark <= 0:
-                    self.log("PM_SKIP_NO_MARK", symbol=symbol, conid=conid, qty=qty)
+                    if do_log_pm:
+                        self.log("PM_SKIP_NO_MARK", symbol=pos_sym, conid=conid, qty=qty)
                     continue
 
                 ret_pct = (float(mark) - float(entry)) / float(entry) * 100.0
 
-                self.log(
-                    "PM_STATE",
-                    symbol=symbol,
-                    conid=conid,
-                    qty=qty,
-                    entry=round(float(entry), 4),
-                    mark=round(float(mark), 4),
-                    ret_pct=round(float(ret_pct), 3),
-                )
+                if do_log_pm:
+                    self.log(
+                        "PM_STATE",
+                        symbol=pos_sym,
+                        conid=conid,
+                        qty=qty,
+                        entry=round(float(entry), 4),
+                        mark=round(float(mark), 4),
+                        ret_pct=round(float(ret_pct), 3),
+                    )
 
                 # +0.5% -> breakeven stop at entry (only once)
                 if ret_pct >= 0.5 and not self._has_working_breakeven_stop(conid):
-                    self.log("PM_BE_TRIGGER", symbol=symbol, conid=conid, qty=qty, stop_price=round(float(entry), 4), ret_pct=round(float(ret_pct), 3))
+                    if do_log_pm:
+                        self.log("PM_BE_TRIGGER", symbol=pos_sym, conid=conid, qty=qty, stop_price=round(float(entry), 4), ret_pct=round(float(ret_pct), 3))
                     self.place_breakeven_stop(
                         contract=p.contract,
                         qty=qty,
                         stop_price=float(entry),
                         allow=allow_exits,
                     )
-                    self._print_open_orders_snapshot(where="after_be_stop")
+                    if do_log_pm:
+                        self._print_open_orders_snapshot(where="after_be_stop")
 
                 # +1.0% -> sell 1 (only if you have >=2, only once)
                 if ret_pct >= 1.0 and qty >= 2 and not self._has_working_scaleout_sell(conid):
-                    self.log("PM_TP1_TRIGGER", symbol=symbol, conid=conid, ret_pct=round(float(ret_pct), 3))
+                    if do_log_pm:
+                        self.log("PM_TP1_TRIGGER", symbol=pos_sym, conid=conid, ret_pct=round(float(ret_pct), 3))
                     self.place_sell_scaleout_1(
                         contract=p.contract,
                         allow=allow_exits,
                     )
-                    self._print_positions_snapshot(where="after_tp1")
-                    self._print_open_orders_snapshot(where="after_tp1")
+                    if do_log_pm:
+                        self._print_positions_snapshot(where="after_tp1")
+                        self._print_open_orders_snapshot(where="after_tp1")
 
                 # Safety: ensure trailing exists (WORKING only)
                 if not self._has_working_trailing_sell(conid):
-                    self.log("PM_TRAIL_ENSURE_TRIGGER", symbol=symbol, conid=conid, qty=qty)
+                    if do_log_pm:
+                        self.log("PM_TRAIL_ENSURE_TRIGGER", symbol=pos_sym, conid=conid, qty=qty)
                     self.place_trailing_stop(p.contract, qty, allow_exits)
-                    self._print_open_orders_snapshot(where="after_trail_ensure")
+                    if do_log_pm:
+                        self._print_open_orders_snapshot(where="after_trail_ensure")
                 else:
-                    self.log("PM_TRAIL_EXISTS", symbol=symbol, conid=conid)
+                    if do_log_pm:
+                        self.log("PM_TRAIL_EXISTS", symbol=pos_sym, conid=conid)
 
             except Exception as e:
-                self.log("PM_ERR", symbol=symbol, err=str(e))
+                if do_log_pm:
+                    self.log("PM_ERR", symbol=symbol, err=str(e))
                 continue
+
+        # ✅ flip once after first symbol's management pass
+        if not self._pm_logged_this_cycle:
+            self._pm_logged_this_cycle = True
 
         self.log("RUN_END", symbol=symbol)
 
@@ -850,6 +876,9 @@ class IBKREquityExecutionEngine:
 def main_execution(client_id: int, symbols):
     eng = IBKREquityExecutionEngine(client_id)
     try:
+        # ✅ reset once per execution cycle so PM logs happen only once per run
+        eng._pm_logged_this_cycle = False
+
         for i, sym in enumerate(symbols, start=1):
             print(f"[EQUITY EXEC] ({i}/{len(symbols)}) {sym}")
             eng.run(sym)
