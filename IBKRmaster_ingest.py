@@ -1,3 +1,4 @@
+# ibkr_stock_5m_ingest.py
 from IBKR_database import master_ingest_5m
 import duckdb
 import argparse
@@ -19,7 +20,7 @@ if __name__ == "__main__":
         # =========================
         con.execute("""
             CREATE TABLE IF NOT EXISTS stock_bars_raw_5m (
-                con_id BIGINT,
+                underlying_price DOUBLE,
                 snapshot_id TEXT,
                 timestamp TIMESTAMP,
                 symbol TEXT,
@@ -37,7 +38,7 @@ if __name__ == "__main__":
         # =========================
         con.execute("""
             CREATE TABLE IF NOT EXISTS stock_bars_enriched_5m (
-                con_id BIGINT,
+                underlying_price DOUBLE,
                 snapshot_id TEXT,
                 timestamp TIMESTAMP,
                 symbol TEXT,
@@ -73,7 +74,7 @@ if __name__ == "__main__":
         # =========================
         con.execute("""
             CREATE TABLE IF NOT EXISTS stock_execution_signals_5m (
-                con_id BIGINT,
+                underlying_price DOUBLE,
                 snapshot_id TEXT,
                 timestamp TIMESTAMP,
                 symbol TEXT,
@@ -128,3 +129,4 @@ if __name__ == "__main__":
             DELETE FROM stock_execution_signals_5m
             WHERE timestamp < NOW() - INTERVAL '35 days';
         """)
+

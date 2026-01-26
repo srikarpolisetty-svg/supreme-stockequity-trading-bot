@@ -10,7 +10,6 @@ import duckdb
 import exchange_calendars as ecals
 from ib_insync import IB, Contract, MarketOrder, Order, StopOrder, LimitOrder
 
-
 # =========================
 # Config
 # =========================
@@ -97,7 +96,6 @@ class IBKREquityExecutionEngine:
         return " " + " ".join(parts)
 
     def log_info(self, event: str, **fields):
-        # ✅ keep INFO always visible
         print(f"[EQUITY EXEC][{event}] {self._ts()}{self._fmt_fields(fields)}")
 
     def log_debug(self, event: str, **fields):
@@ -106,9 +104,29 @@ class IBKREquityExecutionEngine:
         print(f"[EQUITY EXEC][{event}] {self._ts()}{self._fmt_fields(fields)}")
 
     def log_error(self, event: str, **fields):
-        # errors always visible
         self._inc("errs")
         print(f"[EQUITY EXEC][{event}] {self._ts()}{self._fmt_fields(fields)}")
+
+    # ✅ NEW: one-line confirmation for the specific trade you just placed (no dumping everything)
+    def _log_trade_one_liner(self, label: str, trade, symbol: str | None = None):
+        try:
+            if trade is None:
+                return
+            o = getattr(trade, "order", None)
+            c = getattr(trade, "contract", None)
+            st = getattr(getattr(trade, "orderStatus", None), "status", None)
+            self.log_info(
+                label,
+                symbol=symbol,
+                orderId=getattr(o, "orderId", None),
+                status=st,
+                action=getattr(o, "action", None),
+                orderType=getattr(o, "orderType", None),
+                qty=getattr(o, "totalQuantity", None),
+                conid=getattr(c, "conId", None),
+            )
+        except Exception:
+            pass
 
     # =========================
     # Per-run stats helpers
@@ -132,7 +150,6 @@ class IBKREquityExecutionEngine:
             pass
 
     def _print_run_summary(self):
-        # one line per run()
         sym = self._run_symbol or "?"
         s = self._stats or {}
         print(
@@ -164,10 +181,8 @@ class IBKREquityExecutionEngine:
             except Exception:
                 continue
 
-        # snapshot header is noisy -> DEBUG
         self.log_debug("POS_SNAPSHOT", where=where, stk_positions=len(stk))
 
-        # per-position lines are very noisy -> DEBUG
         for p in stk:
             try:
                 self.log_debug(
@@ -198,10 +213,8 @@ class IBKREquityExecutionEngine:
             except Exception:
                 continue
 
-        # snapshot header is noisy -> DEBUG
         self.log_debug("ORD_SNAPSHOT", where=where, working=len(working))
 
-        # per-order lines are very noisy -> DEBUG
         for t in working:
             try:
                 o = getattr(t, "order", None)
@@ -237,6 +250,23 @@ class IBKREquityExecutionEngine:
     def stock_contract_from_conid(self, conid: int) -> Contract:
         return Contract(conId=int(conid), secType="STK", exchange="SMART", currency="USD")
 
+    def get_stock_con_id(self, symbol: str) -> int | None:
+        """
+        Resolve conId ONLY when a signal is TRUE.
+        Uses ib_insync qualifyContracts (no extra IBAPI threads).
+        """
+        try:
+            self.connect()
+            c = Contract(symbol=symbol.upper().strip(), secType="STK", exchange="SMART", currency="USD")
+            qualified = self.ib.qualifyContracts(c)
+            if not qualified:
+                return None
+            conid = int(getattr(qualified[0], "conId", 0) or 0)
+            return conid if conid > 0 else None
+        except Exception as e:
+            self.log_error("CONID_RESOLVE_FAIL", symbol=symbol, err=str(e))
+            return None
+
     def place_market_sell(self, contract: Contract, qty: int, allow: bool):
         if not allow:
             self.log_info("ORDER_SELL_MKT_SKIP_ALLOW_FALSE", conid=getattr(contract, "conId", None), qty=qty)
@@ -246,10 +276,7 @@ class IBKREquityExecutionEngine:
         t = self.ib.placeOrder(contract, MarketOrder("SELL", qty))
         self._track_trade(t)
         self.ib.sleep(0.2)
-        try:
-            self.log_info("ORDER_SELL_MKT_PLACED", conid=getattr(contract, "conId", None), qty=qty, orderId=t.order.orderId)
-        except Exception:
-            self.log_info("ORDER_SELL_MKT_PLACED", conid=getattr(contract, "conId", None), qty=qty)
+        self._log_trade_one_liner("ORDER_SELL_MKT_STATUS", t)
         return t
 
     # -------------------------
@@ -295,61 +322,53 @@ class IBKREquityExecutionEngine:
         t = self.ib.placeOrder(contract, o)
         self._track_trade(t)
         self.ib.sleep(0.2)
-        try:
-            self.log_info("ORDER_TRAIL_PLACED", conid=getattr(contract, "conId", None), qty=qty, orderId=t.order.orderId)
-        except Exception:
-            self.log_info("ORDER_TRAIL_PLACED", conid=getattr(contract, "conId", None), qty=qty)
+        self._log_trade_one_liner("ORDER_TRAIL_STATUS", t)
         return t
 
     # -------------------------
     # DB (SAFE)
     # -------------------------
-    def load_latest_signal(self, symbol: str):
+    def load_latest_signal(self, symbol: str) -> int | None:
         """
-        Safe DB read. Returns a df or empty df on failure.
-        """
-        try:
-            con = duckdb.connect(DB_PATH, read_only=True)
-            df = con.execute(
-                """
-                SELECT *
-                FROM stock_execution_signals_5m
-                WHERE symbol = ?
-                  AND trade_signal = TRUE
-                ORDER BY timestamp DESC
-                LIMIT 1
-                """,
-                [symbol],
-            ).df()
-            con.close()
-            return df
-        except Exception as e:
-            # DB failures should be visible, but not spammy
-            self.log_error("DB_LOAD_LATEST_SIGNAL_FAIL", symbol=symbol, err=str(e))
-            return duckdb.connect(":memory:").execute("SELECT 1 WHERE 0=1").df()
-
-    def _safe_int(self, v):
-        """
-        Safely coerce conId-like values to int or return None.
-        Handles None / NaN / strings / floats.
+        Load the latest row for symbol.
+        If trade_signal is TRUE, resolve + return conId.
+        Else return None.
         """
         try:
-            if v is None:
+            # ✅ NEW: context manager so close is guaranteed
+            with duckdb.connect(DB_PATH, read_only=True) as con:
+                df = con.execute(
+                    """
+                    SELECT trade_signal
+                    FROM stock_execution_signals_5m
+                    WHERE symbol = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    [symbol],
+                ).df()
+
+            if df.empty:
                 return None
 
-            import math
-            if isinstance(v, float) and math.isnan(v):
-                return None
+            trade_signal = df.iloc[0]["trade_signal"]
 
-            if isinstance(v, str):
-                v = v.strip()
-                if not v:
+            # ✅ NEW: treat numpy.bool_ / 1/0 cleanly; ignore None/NaN safely
+            try:
+                import pandas as pd
+                if pd.isna(trade_signal):
                     return None
-                if "." in v:
-                    v = float(v)
+                trade_signal_bool = bool(trade_signal)
+            except Exception:
+                trade_signal_bool = (trade_signal is True)
 
-            return int(v)
-        except Exception:
+            if trade_signal_bool:
+                return self.get_stock_con_id(symbol)
+
+            return None
+
+        except Exception as e:
+            self.log_error("DB_LOAD_LATEST_SIGNAL_FAIL", symbol=symbol, err=str(e))
             return None
 
     def get_daily_pnl(self) -> float | None:
@@ -359,12 +378,11 @@ class IBKREquityExecutionEngine:
                 return None
             account = acct[0]
 
-            # subscribe ONCE
             if self._pnl_sub is None:
                 self._pnl_sub = self.ib.reqPnL(account, "")
-                self.ib.sleep(0.25)   # let first value arrive
+                self.ib.sleep(0.25)
             else:
-                self.ib.sleep(0.05)   # yield to event loop
+                self.ib.sleep(0.05)
 
             daily = getattr(self._pnl_sub, "dailyPnL", None)
             if daily is None:
@@ -374,9 +392,6 @@ class IBKREquityExecutionEngine:
             return None
 
     def close_all_stock_positions(self, allow: bool):
-        """
-        Force-liquidate all STK positions with market sells.
-        """
         if not allow:
             self.log_info("LIQUIDATE_SKIP_EXITS_DISABLED")
             return
@@ -402,18 +417,11 @@ class IBKREquityExecutionEngine:
         self._print_open_orders_snapshot(where="liquidate_end")
 
     def enforce_daily_loss_killswitch(self, max_day_risk: float, allow_exits: bool) -> bool:
-        """
-        If today's PnL <= -max_day_risk:
-          - closes all stock positions (if exits allowed)
-          - returns False (disallow new entries)
-        Otherwise returns True.
-        """
         daily_pnl = self.get_daily_pnl()
-        # daily PnL is useful but not too spammy -> INFO
         self.log_info("DAILY_PNL", daily_pnl=daily_pnl, max_day_risk=round(float(max_day_risk), 2))
 
         if daily_pnl is None:
-            return True  # can't measure -> don't kill
+            return True
 
         if daily_pnl <= -float(max_day_risk):
             self.log_info(
@@ -432,10 +440,6 @@ class IBKREquityExecutionEngine:
     # Order classification
     # -------------------------
     def _is_entry_order_trade(self, t) -> bool:
-        """
-        True only for ENTRY orders.
-        Excludes protective TRAIL orders.
-        """
         try:
             o = t.order
             if getattr(o, "orderType", None) == "TRAIL":
@@ -457,10 +461,6 @@ class IBKREquityExecutionEngine:
     # Mark price (for mgmt + outside-RTH limits)
     # -------------------------
     def get_mark_price_snapshot(self, contract: Contract, wait_s: float = 0.6) -> float | None:
-        """
-        Snapshot mark: mid if bid/ask exist, else last, else close.
-        Works pre/after too (when data exists).
-        """
         t = self.ib.reqMktData(contract, "", snapshot=True, regulatorySnapshot=False)
         self.ib.sleep(wait_s)
 
@@ -478,9 +478,6 @@ class IBKREquityExecutionEngine:
         return None
 
     def _entry_from_position(self, p) -> float | None:
-        """
-        For stocks, avgCost is usually per-share.
-        """
         try:
             ac = float(getattr(p, "avgCost", None) or 0.0)
             return ac if ac > 0 else None
@@ -506,9 +503,6 @@ class IBKREquityExecutionEngine:
         return out
 
     def _has_working_breakeven_stop(self, conid: int) -> bool:
-        """
-        Any working SELL stop counts as 'breakeven stop already placed'.
-        """
         for t in self._open_trades_for_conid(conid):
             try:
                 o = t.order
@@ -519,10 +513,6 @@ class IBKREquityExecutionEngine:
         return False
 
     def _has_working_scaleout_sell(self, conid: int) -> bool:
-        """
-        Prevent multiple 1-share take-profits stacking.
-        We treat any working SELL MKT/LMT as already scaling out.
-        """
         for t in self._open_trades_for_conid(conid):
             try:
                 o = t.order
@@ -533,9 +523,6 @@ class IBKREquityExecutionEngine:
         return False
 
     def _has_working_trailing_sell(self, conid: int) -> bool:
-        """
-        FIX #2: Only count WORKING trailing orders, not filled/cancelled history.
-        """
         working = {"Submitted", "PreSubmitted", "ApiPending"}
         for t in self.ib.trades():
             try:
@@ -554,10 +541,6 @@ class IBKREquityExecutionEngine:
     # Order placement (pre/after supported)
     # -------------------------
     def place_buy_entry(self, contract: Contract, qty: int, allow: bool):
-        """
-        RTH: Market BUY
-        Outside RTH: Limit BUY (outsideRth=True) at mark
-        """
         if not allow:
             self.log_info("ORDER_BUY_SKIP_ALLOW_FALSE", conid=getattr(contract, "conId", None), qty=qty)
             return None
@@ -589,17 +572,10 @@ class IBKREquityExecutionEngine:
         t = self.ib.placeOrder(contract, o)
         self._track_trade(t)
         self.ib.sleep(0.2)
-        try:
-            self.log_info("ORDER_BUY_PLACED", conid=getattr(contract, "conId", None), qty=qty, orderId=t.order.orderId)
-        except Exception:
-            self.log_info("ORDER_BUY_PLACED", conid=getattr(contract, "conId", None), qty=qty)
+        self._log_trade_one_liner("ORDER_BUY_STATUS", t)
         return t
 
     def place_sell_scaleout_1(self, contract: Contract, allow: bool):
-        """
-        RTH: Market SELL 1
-        Outside RTH: Limit SELL 1 (outsideRth=True) at mark
-        """
         if not allow:
             self.log_info("ORDER_TP1_SKIP_ALLOW_FALSE", conid=getattr(contract, "conId", None))
             return None
@@ -629,16 +605,10 @@ class IBKREquityExecutionEngine:
         t = self.ib.placeOrder(contract, o)
         self._track_trade(t)
         self.ib.sleep(0.2)
-        try:
-            self.log_info("ORDER_TP1_PLACED", conid=getattr(contract, "conId", None), orderId=t.order.orderId)
-        except Exception:
-            self.log_info("ORDER_TP1_PLACED", conid=getattr(contract, "conId", None))
+        self._log_trade_one_liner("ORDER_TP1_STATUS", t)
         return t
 
     def place_breakeven_stop(self, contract: Contract, qty: int, stop_price: float, allow: bool):
-        """
-        Place STOP SELL at entry price (breakeven).
-        """
         if not allow:
             self.log_info("ORDER_BE_STOP_SKIP_ALLOW_FALSE", conid=getattr(contract, "conId", None), qty=qty)
             return None
@@ -646,7 +616,12 @@ class IBKREquityExecutionEngine:
         qty = int(qty)
         stop_price = float(stop_price)
 
-        self.log_info("ORDER_BE_STOP_PLACING", conid=getattr(contract, "conId", None), qty=qty, stop_price=round(stop_price, 4))
+        self.log_info(
+            "ORDER_BE_STOP_PLACING",
+            conid=getattr(contract, "conId", None),
+            qty=qty,
+            stop_price=round(stop_price, 4),
+        )
 
         o = StopOrder("SELL", qty, stop_price)
         o.outsideRth = True
@@ -654,10 +629,7 @@ class IBKREquityExecutionEngine:
         t = self.ib.placeOrder(contract, o)
         self._track_trade(t)
         self.ib.sleep(0.2)
-        try:
-            self.log_info("ORDER_BE_STOP_PLACED", conid=getattr(contract, "conId", None), qty=qty, orderId=t.order.orderId)
-        except Exception:
-            self.log_info("ORDER_BE_STOP_PLACED", conid=getattr(contract, "conId", None), qty=qty)
+        self._log_trade_one_liner("ORDER_BE_STOP_STATUS", t)
         return t
 
     # -------------------------
@@ -666,9 +638,7 @@ class IBKREquityExecutionEngine:
     def run(self, symbol: str):
         self._reset_stats(symbol)
 
-        # always print one summary line, even on early return
         try:
-            # INFO: start/connected/budgets are important
             self.log_info("RUN_START", symbol=symbol, client_id=self.client_id, port=PORT, log_level=self.log_level)
 
             self.connect()
@@ -678,7 +648,12 @@ class IBKREquityExecutionEngine:
             allow_exits = bool(allow_orders or self.allow_exits_when_killed)
             allow_entries = bool(allow_orders)
 
-            # gates are useful but can be noisy -> DEBUG
+            # ✅ NEW: simple test-mode override (minimum BS)
+            #   ALLOW_ENTRIES=0  -> never enter, but still reads signals + manages exits
+            env_allow_entries = str(os.getenv("ALLOW_ENTRIES", "")).strip()
+            if env_allow_entries in {"0", "false", "False", "no", "NO"}:
+                allow_entries = False
+
             self.log_debug(
                 "GATE_ALLOW_FLAGS",
                 symbol=symbol,
@@ -688,12 +663,10 @@ class IBKREquityExecutionEngine:
                 rth_now=self._is_rth_now(),
             )
 
-            # ✅ only do full snapshots once per cycle (not per symbol) AND only in DEBUG
             if not self._pm_logged_this_cycle and self.log_level == "DEBUG":
                 self._print_positions_snapshot(where="run_start")
                 self._print_open_orders_snapshot(where="run_start")
 
-            # Buying power (SAFE)
             acct = {}
             for r in self.ib.accountSummary():
                 v = getattr(r, "value", None)
@@ -718,7 +691,6 @@ class IBKREquityExecutionEngine:
                 max_day_risk=round(float(max_day_risk), 2),
             )
 
-            # Daily loss kill switch (INFO because important)
             self.log_info("DAILY_LOSS_CHECK", symbol=symbol, max_day_risk=round(float(max_day_risk), 2), allow_exits=allow_exits)
             allow_entries_before = bool(allow_entries)
             allow_entries = bool(allow_entries) and self.enforce_daily_loss_killswitch(
@@ -727,9 +699,6 @@ class IBKREquityExecutionEngine:
             )
             self.log_info("DAILY_LOSS_RESULT", symbol=symbol, allow_entries_before=allow_entries_before, allow_entries_after=allow_entries)
 
-            # -------------------------
-            # Entry gates (ENTRY orders only)
-            # -------------------------
             open_trades = [
                 t for t in self.ib.trades()
                 if getattr(getattr(t, "orderStatus", None), "status", None) in {"Submitted", "PreSubmitted", "ApiPending"}
@@ -761,157 +730,135 @@ class IBKREquityExecutionEngine:
                     break
 
             # -------------------------
-            # Load signal
+            # Load signal -> conId (only resolves conId if latest signal is TRUE)
             # -------------------------
-            df = self.load_latest_signal(symbol)
-            if df.empty:
-                self.log_debug("SIGNAL_NONE", symbol=symbol)
+            conid = self.load_latest_signal(symbol)
+            if conid is None:
+                self.log_info("NO_SIGNAL", symbol=symbol)
+                return
+
+            self._inc("signal")
+
+            # ✅ NEW: tiny invariants (hard stops) before any entry attempt
+            if not isinstance(conid, int) or conid <= 0:
+                self.log_error("INV_BAD_CONID", symbol=symbol, conid=conid)
+                return
+
+            qty = int(self.risk.entry_qty)
+            if qty <= 0:
+                self.log_error("INV_BAD_QTY", symbol=symbol, qty=qty)
+                return
+
+            if self._already_long_conid(conid):
+                self.log_info("ENTRY_SKIP_ALREADY_LONG", symbol=symbol, conid=conid)
+            elif not allow_entries:
+                self.log_info("ENTRY_SKIP_ALLOW_ENTRIES_FALSE", symbol=symbol, conid=conid)
             else:
-                self._inc("signal")
+                contract = self.stock_contract_from_conid(conid)
 
-                # show that a signal exists (INFO)
-                try:
-                    row0 = df.iloc[0]
-                    ts0 = row0.get("timestamp", None) if hasattr(row0, "get") else None
-                    con0 = row0.get("con_id", None) if hasattr(row0, "get") else None
-                except Exception:
-                    ts0 = None
-                    con0 = None
-
-                self.log_info("SIGNAL_FOUND", symbol=symbol, row_ts=ts0, con_id=con0, allow_entries=allow_entries)
-
-                row = df.iloc[0]
-                conid = self._safe_int(row["con_id"])
-                if conid is None:
-                    self.log_error("SIGNAL_SKIP_BAD_CONID", symbol=symbol, raw_con_id=row.get("con_id", None))
+                entry_price = self.get_mark_price_snapshot(contract)
+                if entry_price is None or entry_price <= 0:
+                    self._inc("skips_no_price")
+                    self.log_info("PREFLIGHT_SKIP_NO_PRICE", symbol=symbol, conid=conid)
                     return
 
-                if self._already_long_conid(conid):
-                    self.log_info("ENTRY_SKIP_ALREADY_LONG", symbol=symbol, conid=conid)
-                elif not allow_entries:
-                    self.log_info("ENTRY_SKIP_ALLOW_ENTRIES_FALSE", symbol=symbol, conid=conid)
-                else:
-                    contract = self.stock_contract_from_conid(conid)
+                stop_price_for_math = float(entry_price) * (1.0 - float(self.risk.preflight_stop_pct))
+                risk_per_share = float(entry_price) - float(stop_price_for_math)
+                dollar_risk = float(risk_per_share) * float(qty)
 
-                    # PREFLIGHT risk/cost check (still uses price)
-                    qty = int(self.risk.entry_qty)
-                    entry_price = self.get_mark_price_snapshot(contract)
-                    if entry_price is None or entry_price <= 0:
-                        self._inc("skips_no_price")
-                        self.log_info("PREFLIGHT_SKIP_NO_PRICE", symbol=symbol, conid=conid)
-                        return
+                self.log_info(
+                    "PREFLIGHT",
+                    symbol=symbol,
+                    conid=conid,
+                    qty=qty,
+                    entry_price=round(float(entry_price), 4),
+                    preflight_stop_pct=self.risk.preflight_stop_pct,
+                    dollar_risk=round(float(dollar_risk), 2),
+                    max_trade_risk=round(float(max_trade_risk), 2),
+                )
 
-                    stop_price_for_math = float(entry_price) * (1.0 - float(self.risk.preflight_stop_pct))
-                    risk_per_share = float(entry_price) - float(stop_price_for_math)
-                    dollar_risk = float(risk_per_share) * float(qty)
-
+                if dollar_risk > float(max_trade_risk):
                     self.log_info(
-                        "PREFLIGHT",
+                        "PREFLIGHT_SKIP_RISK_TOO_HIGH",
                         symbol=symbol,
                         conid=conid,
-                        qty=qty,
-                        entry_price=round(float(entry_price), 4),
-                        preflight_stop_pct=self.risk.preflight_stop_pct,
                         dollar_risk=round(float(dollar_risk), 2),
                         max_trade_risk=round(float(max_trade_risk), 2),
                     )
+                    return
 
-                    if dollar_risk > float(max_trade_risk):
-                        self.log_info(
-                            "PREFLIGHT_SKIP_RISK_TOO_HIGH",
-                            symbol=symbol,
-                            conid=conid,
-                            dollar_risk=round(float(dollar_risk), 2),
-                            max_trade_risk=round(float(max_trade_risk), 2),
-                        )
-                        return
+                tr = self.place_buy_entry(contract, qty=qty, allow=allow_entries)
+                if tr is not None:
+                    self._inc("entry")
+                    self.log_info("ORDER_BUY_DONE", symbol=symbol, conid=conid, qty=qty)
 
-                    # ENTRY (pre/after allowed)
-                    tr = self.place_buy_entry(contract, qty=qty, allow=allow_entries)
-                    if tr is not None:
-                        self._inc("entry")
-                        try:
-                            oid = tr.order.orderId
-                        except Exception:
-                            oid = None
-                        self.log_info("ORDER_BUY_DONE", symbol=symbol, conid=conid, qty=qty, orderId=oid)
+                    if not self._pm_logged_this_cycle and self.log_level == "DEBUG":
+                        self._print_positions_snapshot(where="after_buy")
+                        self._print_open_orders_snapshot(where="after_buy")
 
-                        # ✅ snapshots after entry only once per cycle AND only in DEBUG
-                        if not self._pm_logged_this_cycle and self.log_level == "DEBUG":
-                            self._print_positions_snapshot(where="after_buy")
-                            self._print_open_orders_snapshot(where="after_buy")
+                    if not self._has_working_trailing_sell(conid):
+                        self.place_trailing_stop(contract, qty, allow_exits)
+                    else:
+                        self.log_info("ORDER_TRAIL_SKIP_EXISTS", symbol=symbol, conid=conid)
 
-                        # trailing stop safety net (place only if no WORKING trail exists)
-                        if not self._has_working_trailing_sell(conid):
-                            self.place_trailing_stop(contract, qty, allow_exits)
-                        else:
-                            self.log_info("ORDER_TRAIL_SKIP_EXISTS", symbol=symbol, conid=conid)
-
-                        # ✅ snapshots after trail only once per cycle AND only in DEBUG
-                        if not self._pm_logged_this_cycle and self.log_level == "DEBUG":
-                            self._print_positions_snapshot(where="after_trail")
-                            self._print_open_orders_snapshot(where="after_trail")
+                    if not self._pm_logged_this_cycle and self.log_level == "DEBUG":
+                        self._print_positions_snapshot(where="after_trail")
+                        self._print_open_orders_snapshot(where="after_trail")
 
             # -------------------------
             # Position management (applies to ALL open stock positions)
-            # Rules:
-            #  +0.5% -> stop at entry
-            #  +1.0% -> sell 1 of 2
             # -------------------------
             do_log_pm = (not self._pm_logged_this_cycle) and (self.log_level == "DEBUG")
 
             for p in self.get_positions():
                 try:
-                    qty = int(p.position)
-                    if qty <= 0:
+                    qty_pos = int(p.position)
+                    if qty_pos <= 0:
                         continue
 
-                    conid = int(p.contract.conId)
+                    conid_pos = int(p.contract.conId)
                     pos_sym = getattr(p.contract, "symbol", None)
 
                     entry = self._entry_from_position(p)
                     if entry is None or entry <= 0:
                         if do_log_pm:
-                            self.log_debug("PM_SKIP_NO_ENTRY", symbol=pos_sym, conid=conid, qty=qty)
+                            self.log_debug("PM_SKIP_NO_ENTRY", symbol=pos_sym, conid=conid_pos, qty=qty_pos)
                         continue
 
                     mark = self.get_mark_price_snapshot(p.contract)
                     if mark is None or mark <= 0:
                         if do_log_pm:
-                            self.log_debug("PM_SKIP_NO_MARK", symbol=pos_sym, conid=conid, qty=qty)
+                            self.log_debug("PM_SKIP_NO_MARK", symbol=pos_sym, conid=conid_pos, qty=qty_pos)
                         continue
 
                     ret_pct = (float(mark) - float(entry)) / float(entry) * 100.0
 
-                    # PM_STATE is very noisy -> DEBUG only
                     if do_log_pm:
                         self.log_debug(
                             "PM_STATE",
                             symbol=pos_sym,
-                            conid=conid,
-                            qty=qty,
+                            conid=conid_pos,
+                            qty=qty_pos,
                             entry=round(float(entry), 4),
                             mark=round(float(mark), 4),
                             ret_pct=round(float(ret_pct), 3),
                         )
 
-                    # +0.5% -> breakeven stop at entry (only once)
-                    if ret_pct >= 0.5 and not self._has_working_breakeven_stop(conid):
+                    if ret_pct >= 0.5 and not self._has_working_breakeven_stop(conid_pos):
                         self._inc("be")
-                        self.log_info("PM_BE_TRIGGER", symbol=pos_sym, conid=conid, qty=qty, stop_price=round(float(entry), 4), ret_pct=round(float(ret_pct), 3))
+                        self.log_info("PM_BE_TRIGGER", symbol=pos_sym, conid=conid_pos, qty=qty_pos, stop_price=round(float(entry), 4), ret_pct=round(float(ret_pct), 3))
                         self.place_breakeven_stop(
                             contract=p.contract,
-                            qty=qty,
+                            qty=qty_pos,
                             stop_price=float(entry),
                             allow=allow_exits,
                         )
                         if do_log_pm:
                             self._print_open_orders_snapshot(where="after_be_stop")
 
-                    # +1.0% -> sell 1 (only if you have >=2, only once)
-                    if ret_pct >= 1.0 and qty >= 2 and not self._has_working_scaleout_sell(conid):
+                    if ret_pct >= 1.0 and qty_pos >= 2 and not self._has_working_scaleout_sell(conid_pos):
                         self._inc("tp1")
-                        self.log_info("PM_TP1_TRIGGER", symbol=pos_sym, conid=conid, ret_pct=round(float(ret_pct), 3))
+                        self.log_info("PM_TP1_TRIGGER", symbol=pos_sym, conid=conid_pos, ret_pct=round(float(ret_pct), 3))
                         self.place_sell_scaleout_1(
                             contract=p.contract,
                             allow=allow_exits,
@@ -920,37 +867,32 @@ class IBKREquityExecutionEngine:
                             self._print_positions_snapshot(where="after_tp1")
                             self._print_open_orders_snapshot(where="after_tp1")
 
-                    # Safety: ensure trailing exists (WORKING only)
-                    if not self._has_working_trailing_sell(conid):
+                    if not self._has_working_trailing_sell(conid_pos):
                         self._inc("trail_ensure")
-                        self.log_info("PM_TRAIL_ENSURE_TRIGGER", symbol=pos_sym, conid=conid, qty=qty)
-                        self.place_trailing_stop(p.contract, qty, allow_exits)
+                        self.log_info("PM_TRAIL_ENSURE_TRIGGER", symbol=pos_sym, conid=conid_pos, qty=qty_pos)
+                        self.place_trailing_stop(p.contract, qty_pos, allow_exits)
                         if do_log_pm:
                             self._print_open_orders_snapshot(where="after_trail_ensure")
                     else:
                         if do_log_pm:
-                            self.log_debug("PM_TRAIL_EXISTS", symbol=pos_sym, conid=conid)
+                            self.log_debug("PM_TRAIL_EXISTS", symbol=pos_sym, conid=conid_pos)
 
                 except Exception as e:
                     self.log_error("PM_ERR", symbol=symbol, err=str(e))
                     continue
 
-            # ✅ lock PM logging for the rest of this main_execution cycle (no more PM logs for remaining symbols)
             self._pm_logged_this_cycle = True
 
         finally:
-            # ✅ always one line per symbol run (your “behavior proof”)
             self._print_run_summary()
 
 
 def main_execution(client_id: int, symbols):
     eng = IBKREquityExecutionEngine(client_id)
     try:
-        # ✅ reset once per execution cycle so PM logs happen only once per run
         eng._pm_logged_this_cycle = False
 
         for i, sym in enumerate(symbols, start=1):
-            # keep this lightweight progress line
             print(f"[EQUITY EXEC] ({i}/{len(symbols)}) {sym}")
             eng.run(sym)
             time.sleep(0.15)
