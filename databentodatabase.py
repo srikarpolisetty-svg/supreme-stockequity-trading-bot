@@ -4,13 +4,16 @@ import os
 import pandas as pd
 import databento as db
 from dbfunctions import compute_z_scores_for_stock 
+from config import DATABENTO_API_KEY
+
+
 
 NY_TZ = ZoneInfo("America/New_York")
 DB_PATH = "/home/ubuntu/supreme-stockequity-trading-bot/stocks_data.db"
 
 def ingest_stock_5m_databento(symbol: str, run_id: str, shard_id: int):
     def get_stock_ohlcv(symbol: str) -> dict | None:
-        client = db.Historical()
+        client = db.Historical(api_key=DATABENTO_API_KEY)
 
         now = datetime.now(timezone.utc)
         start = now - timedelta(minutes=5)
